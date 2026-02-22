@@ -1,0 +1,763 @@
+import math
+from datetime import timedelta
+
+from django.db import transaction
+from django.utils import timezone
+from rest_framework import status
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from drf_spectacular.utils import extend_schema, inline_serializer, OpenApiExample
+from rest_framework import serializers as drf_serializers
+
+from apps.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from apps.core.throttles import PaymentThrottle
+from apps.programs.models import Program
+
+from .models import Enrollment, Payment
+from .serializers import (
+    EnrollmentCreateSerializer,
+    EnrollmentDetailSerializer,
+    EnrollmentListSerializer,
+    PaymentInitiateSerializer,
+    PaymentSerializer,
+    PaymentStatusSerializer,
+)
+from .services import MoneyFusionError, MoneyFusionService
+
+
+# -- Reusable inline response schemas ----------------------------------------
+
+_ErrorDetailSchema = inline_serializer(
+    name='ErrorDetail',
+    fields={
+        'field': drf_serializers.CharField(),
+        'message': drf_serializers.CharField(),
+    },
+)
+
+_ErrorResponseSchema = inline_serializer(
+    name='ErrorResponse',
+    fields={
+        'error': inline_serializer(
+            name='ErrorBody',
+            fields={
+                'code': drf_serializers.CharField(),
+                'message': drf_serializers.CharField(),
+                'details': drf_serializers.ListField(
+                    child=_ErrorDetailSchema, required=False,
+                ),
+            },
+        ),
+    },
+)
+
+_EnrollmentListResponseSchema = inline_serializer(
+    name='EnrollmentListResponse',
+    fields={
+        'data': EnrollmentListSerializer(many=True),
+    },
+)
+
+_EnrollmentCreateResponseSchema = inline_serializer(
+    name='EnrollmentCreateResponse',
+    fields={
+        'data': inline_serializer(
+            name='EnrollmentCreateData',
+            fields={
+                'id': drf_serializers.CharField(),
+                'programId': drf_serializers.CharField(),
+                'userId': drf_serializers.CharField(),
+                'paymentType': drf_serializers.ChoiceField(choices=['full', 'installment']),
+                'paymentStatus': drf_serializers.CharField(),
+                'amountPaid': drf_serializers.IntegerField(),
+                'totalAmount': drf_serializers.IntegerField(),
+                'installmentAmount': drf_serializers.IntegerField(allow_null=True),
+                'enrollmentDate': drf_serializers.DateTimeField(),
+                'payments': PaymentSerializer(many=True),
+            },
+        ),
+    },
+)
+
+_PaymentInitiateResponseSchema = inline_serializer(
+    name='PaymentInitiateResponse',
+    fields={
+        'data': inline_serializer(
+            name='PaymentInitiateData',
+            fields={
+                'paymentId': drf_serializers.CharField(),
+                'transactionId': drf_serializers.CharField(),
+                'status': drf_serializers.CharField(),
+                'message': drf_serializers.CharField(),
+                'expiresAt': drf_serializers.DateTimeField(),
+                'paymentUrl': drf_serializers.URLField(required=False),
+            },
+        ),
+    },
+)
+
+_PaymentListResponseSchema = inline_serializer(
+    name='PaymentListResponse',
+    fields={
+        'data': PaymentSerializer(many=True),
+    },
+)
+
+_WebhookReceivedSchema = inline_serializer(
+    name='WebhookReceived',
+    fields={
+        'received': drf_serializers.BooleanField(),
+    },
+)
+
+_DevSimulateResponseSchema = inline_serializer(
+    name='DevSimulateResponse',
+    fields={
+        'data': inline_serializer(
+            name='DevSimulateData',
+            fields={
+                'paymentId': drf_serializers.CharField(),
+                'status': drf_serializers.CharField(),
+                'enrollmentPaymentStatus': drf_serializers.CharField(),
+                'amountPaid': drf_serializers.IntegerField(),
+                'message': drf_serializers.CharField(),
+            },
+        ),
+    },
+)
+
+_DevSimulateRequestSchema = inline_serializer(
+    name='DevSimulateRequest',
+    fields={
+        'status': drf_serializers.ChoiceField(
+            choices=['completed', 'failed'],
+            required=False,
+            help_text='Desired payment outcome. Defaults to "completed".',
+        ),
+    },
+)
+
+_WebhookRequestSchema = inline_serializer(
+    name='WebhookRequest',
+    fields={
+        'transactionId': drf_serializers.CharField(),
+        'orderId': drf_serializers.CharField(),
+        'status': drf_serializers.ChoiceField(choices=['completed', 'failed']),
+        'signature': drf_serializers.CharField(),
+        'amount': drf_serializers.IntegerField(required=False),
+        'currency': drf_serializers.CharField(required=False),
+        'method': drf_serializers.CharField(required=False),
+        'phone': drf_serializers.CharField(required=False),
+        'timestamp': drf_serializers.CharField(required=False),
+    },
+)
+
+_GatewayErrorSchema = inline_serializer(
+    name='GatewayErrorResponse',
+    fields={
+        'error': inline_serializer(
+            name='GatewayErrorBody',
+            fields={
+                'code': drf_serializers.CharField(),
+                'message': drf_serializers.CharField(),
+            },
+        ),
+    },
+)
+
+
+class EnrollmentListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=['Enrollments'],
+        summary='List user enrollments',
+        description=(
+            'Return all enrollments belonging to the authenticated user. '
+            'Supports optional **paymentStatus** query parameter to filter by '
+            'payment status (pending, partial, completed).'
+        ),
+        parameters=[
+            {
+                'name': 'paymentStatus',
+                'in': 'query',
+                'required': False,
+                'schema': {'type': 'string', 'enum': ['pending', 'partial', 'completed']},
+                'description': 'Filter enrollments by payment status.',
+            },
+        ],
+        responses={
+            200: _EnrollmentListResponseSchema,
+            401: _ErrorResponseSchema,
+        },
+    )
+    def get(self, request):
+        qs = Enrollment.objects.filter(user=request.user).select_related('program')
+
+        payment_status = request.query_params.get('paymentStatus')
+        if payment_status:
+            qs = qs.filter(payment_status=payment_status)
+
+        serializer = EnrollmentListSerializer(qs, many=True)
+        return Response({'data': serializer.data})
+
+    @extend_schema(
+        tags=['Enrollments'],
+        summary='Create enrollment',
+        description=(
+            'Enroll the authenticated user in a program. The program must be '
+            'active and the user must not already be enrolled. '
+            'Payment type determines the payment schedule: **full** requires a '
+            'single payment of the total amount, **installment** splits the '
+            'total into two equal payments (first half unlocks first-degree '
+            'content, second half unlocks the rest).'
+        ),
+        request=EnrollmentCreateSerializer,
+        responses={
+            201: _EnrollmentCreateResponseSchema,
+            400: _ErrorResponseSchema,
+            404: _ErrorResponseSchema,
+            409: _ErrorResponseSchema,
+        },
+        examples=[
+            OpenApiExample(
+                name='Enrollment creation request',
+                value={
+                    'programId': 'prog_abc123',
+                    'paymentType': 'installment',
+                },
+                request_only=True,
+            ),
+            OpenApiExample(
+                name='Enrollment created',
+                value={
+                    'data': {
+                        'id': 'enr_xyz789',
+                        'programId': 'prog_abc123',
+                        'userId': 'usr_001',
+                        'paymentType': 'installment',
+                        'paymentStatus': 'pending',
+                        'amountPaid': 0,
+                        'totalAmount': 50000,
+                        'installmentAmount': 25000,
+                        'enrollmentDate': '2026-02-22T10:00:00Z',
+                        'payments': [],
+                    }
+                },
+                response_only=True,
+                status_codes=['201'],
+            ),
+        ],
+    )
+    def post(self, request):
+        serializer = EnrollmentCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            details = [{'field': f, 'message': str(m[0])} for f, m in serializer.errors.items()]
+            raise ValidationError('Validation failed.', details)
+
+        program_id = serializer.validated_data['programId']
+        payment_type = serializer.validated_data['paymentType']
+
+        try:
+            program = Program.objects.get(id=program_id, is_active=True)
+        except Program.DoesNotExist:
+            raise NotFoundError('Program does not exist.')
+
+        if Enrollment.objects.filter(user=request.user, program=program).exists():
+            raise ConflictError('User already enrolled in this program.')
+
+        enrollment = Enrollment.objects.create(
+            user=request.user,
+            program=program,
+            payment_type=payment_type,
+            total_amount=program.price,
+        )
+
+        data = {
+            'id': enrollment.id,
+            'programId': enrollment.program_id,
+            'userId': enrollment.user_id,
+            'paymentType': enrollment.payment_type,
+            'paymentStatus': enrollment.payment_status,
+            'amountPaid': enrollment.amount_paid,
+            'totalAmount': enrollment.total_amount,
+            'installmentAmount': enrollment.installment_amount,
+            'enrollmentDate': enrollment.enrollment_date,
+            'payments': [],
+        }
+
+        return Response({'data': data}, status=status.HTTP_201_CREATED)
+
+
+class EnrollmentDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=['Enrollments'],
+        summary='Get enrollment detail',
+        description=(
+            'Return a single enrollment with full detail including remaining '
+            'amount, installment amount, degree-level access information, and '
+            'payment history. The authenticated user must own the enrollment.'
+        ),
+        responses={
+            200: EnrollmentDetailSerializer,
+            403: _ErrorResponseSchema,
+            404: _ErrorResponseSchema,
+        },
+    )
+    def get(self, request, enrollment_id):
+        try:
+            enrollment = Enrollment.objects.select_related('program').prefetch_related(
+                'payments', 'program__degrees'
+            ).get(id=enrollment_id)
+        except Enrollment.DoesNotExist:
+            raise NotFoundError('Enrollment does not exist.')
+
+        if enrollment.user_id != request.user.id:
+            raise ForbiddenError('Enrollment belongs to another user.')
+
+        serializer = EnrollmentDetailSerializer(enrollment)
+        return Response(serializer.data)
+
+
+class PaymentInitiateView(APIView):
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [PaymentThrottle]
+
+    @extend_schema(
+        tags=['Payments'],
+        summary='Initiate payment',
+        description=(
+            'Initiate a mobile-money payment through the MoneyFusion gateway. '
+            'The **amount** must match the expected value: for **full** payment '
+            'type it must equal the total program price; for **installment** the '
+            'first payment is ceil(totalAmount / 2) and the second covers the '
+            'remainder. Only one pending payment per enrollment is allowed at a '
+            'time. A successful response returns a payment ID, a MoneyFusion '
+            'transaction ID, and an optional payment URL. The payment expires '
+            'after 30 minutes if not confirmed on the user\'s phone.'
+        ),
+        request=PaymentInitiateSerializer,
+        responses={
+            200: _PaymentInitiateResponseSchema,
+            400: _ErrorResponseSchema,
+            403: _ErrorResponseSchema,
+            404: _ErrorResponseSchema,
+            409: _ErrorResponseSchema,
+            429: _ErrorResponseSchema,
+            502: _GatewayErrorSchema,
+        },
+        examples=[
+            OpenApiExample(
+                name='Payment initiation request',
+                value={
+                    'enrollmentId': 'enr_xyz789',
+                    'amount': 25000,
+                    'method': 'orangeMoney',
+                    'phone': '+2250700000000',
+                },
+                request_only=True,
+            ),
+            OpenApiExample(
+                name='Payment initiated',
+                value={
+                    'data': {
+                        'paymentId': 'pay_abc456',
+                        'transactionId': 'mf_txn_12345',
+                        'status': 'pending',
+                        'message': 'Paiement initie avec succes. Veuillez confirmer sur votre telephone.',
+                        'expiresAt': '2026-02-22T10:30:00Z',
+                        'paymentUrl': 'https://pay.moneyfusion.com/txn/12345',
+                    }
+                },
+                response_only=True,
+                status_codes=['200'],
+            ),
+        ],
+    )
+    def post(self, request):
+        serializer = PaymentInitiateSerializer(data=request.data)
+        if not serializer.is_valid():
+            details = [{'field': f, 'message': str(m[0])} for f, m in serializer.errors.items()]
+            raise ValidationError('Validation failed.', details)
+
+        enrollment_id = serializer.validated_data['enrollmentId']
+        amount = serializer.validated_data['amount']
+        method = serializer.validated_data['method']
+        phone = serializer.validated_data['phone']
+
+        try:
+            enrollment = Enrollment.objects.get(id=enrollment_id)
+        except Enrollment.DoesNotExist:
+            raise NotFoundError('Enrollment does not exist.')
+
+        if enrollment.user_id != request.user.id:
+            raise ForbiddenError('Enrollment belongs to another user.')
+
+        if enrollment.payment_status == 'completed':
+            raise ConflictError('Payment already completed.')
+
+        # Amount validation
+        remaining = enrollment.total_amount - enrollment.amount_paid
+        if enrollment.payment_type == 'full':
+            expected = enrollment.total_amount
+        elif enrollment.amount_paid == 0:
+            expected = math.ceil(enrollment.total_amount / 2)
+        else:
+            expected = remaining
+
+        if amount != expected:
+            raise ValidationError(
+                f'Expected payment amount: {expected} XOF.',
+                [{'field': 'amount', 'message': f'Expected {expected}, got {amount}'}]
+            )
+
+        # Check for pending payments
+        pending = Payment.objects.filter(
+            enrollment=enrollment, status='pending'
+        ).exists()
+        if pending:
+            raise ConflictError('A payment is already pending for this enrollment.')
+
+        payment = Payment.objects.create(
+            enrollment=enrollment,
+            amount=amount,
+            method=method,
+        )
+
+        # Initiate with MoneyFusion
+        try:
+            mf_result = MoneyFusionService.initiate_payment(payment, phone)
+        except MoneyFusionError as e:
+            payment.status = 'failed'
+            payment.save()
+            return Response({
+                'error': {
+                    'code': 'PAYMENT_GATEWAY_ERROR',
+                    'message': str(e),
+                }
+            }, status=status.HTTP_502_BAD_GATEWAY)
+
+        payment.mf_transaction_id = mf_result['transactionId']
+        payment.save()
+
+        expires_at = timezone.now() + timedelta(minutes=30)
+
+        response_data = {
+            'paymentId': payment.id,
+            'transactionId': mf_result['transactionId'],
+            'status': 'pending',
+            'message': 'Paiement initie avec succes. Veuillez confirmer sur votre telephone.',
+            'expiresAt': expires_at.isoformat(),
+        }
+
+        if mf_result.get('paymentUrl'):
+            response_data['paymentUrl'] = mf_result['paymentUrl']
+
+        return Response({'data': response_data})
+
+
+class PaymentStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=['Payments'],
+        summary='Check payment status',
+        description=(
+            'Retrieve the current status of a payment. Returns the payment '
+            'status (pending, completed, failed), amount, method, transaction '
+            'reference, and the MoneyFusion transaction ID. The authenticated '
+            'user must own the enrollment associated with the payment.'
+        ),
+        responses={
+            200: PaymentStatusSerializer,
+            403: _ErrorResponseSchema,
+            404: _ErrorResponseSchema,
+        },
+    )
+    def get(self, request, payment_id):
+        try:
+            payment = Payment.objects.select_related('enrollment').get(id=payment_id)
+        except Payment.DoesNotExist:
+            raise NotFoundError('Payment does not exist.')
+
+        if payment.enrollment.user_id != request.user.id:
+            raise ForbiddenError('Payment belongs to another user.')
+
+        serializer = PaymentStatusSerializer(payment)
+        return Response(serializer.data)
+
+
+class PaymentWebhookView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        tags=['Payments'],
+        summary='MoneyFusion webhook callback',
+        description=(
+            'Receives asynchronous payment status updates from the MoneyFusion '
+            'gateway. **No authentication** is required; instead the payload is '
+            'verified using an HMAC-SHA256 signature computed over a canonical '
+            'set of fields with the shared webhook secret. '
+            'On a **completed** status the payment is marked as completed, the '
+            'enrollment\'s amountPaid is updated, and if fully paid the '
+            'enrollment status moves to "completed". Step progress records are '
+            'initialized for the user on the first successful payment. '
+            'The handler is idempotent: re-processing an already-completed '
+            'payment returns success without side effects.'
+        ),
+        request=_WebhookRequestSchema,
+        responses={
+            200: _WebhookReceivedSchema,
+            401: _ErrorResponseSchema,
+            404: _ErrorResponseSchema,
+        },
+    )
+    @transaction.atomic
+    def post(self, request):
+        data = request.data
+        signature = data.get('signature', '')
+
+        # Verify signature
+        if not MoneyFusionService.verify_webhook_signature(data, signature):
+            return Response(
+                {'error': {'code': 'UNAUTHORIZED', 'message': 'Invalid signature.'}},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        transaction_id = data.get('transactionId')
+        order_id = data.get('orderId')
+        webhook_status = data.get('status')
+
+        # Find payment
+        payment = Payment.objects.filter(mf_transaction_id=transaction_id).first()
+        if not payment:
+            payment = Payment.objects.filter(id=order_id).first()
+        if not payment:
+            return Response(
+                {'error': {'code': 'NOT_FOUND', 'message': 'Payment not found.'}},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Idempotency check
+        if payment.status == 'completed':
+            return Response({'received': True})
+
+        if webhook_status == 'completed':
+            payment.status = 'completed'
+            payment.transaction_ref = transaction_id
+            payment.save()
+
+            enrollment = payment.enrollment
+            enrollment.amount_paid += payment.amount
+            if enrollment.amount_paid >= enrollment.total_amount:
+                enrollment.payment_status = 'completed'
+            elif enrollment.amount_paid > 0:
+                enrollment.payment_status = 'partial'
+            enrollment.save()
+
+            # Initialize progress
+            self._initialize_progress(enrollment)
+
+        elif webhook_status == 'failed':
+            payment.status = 'failed'
+            payment.save()
+
+        return Response({'received': True})
+
+    def _initialize_progress(self, enrollment):
+        """Initialize step_progress for the program on first payment."""
+        from apps.progress.models import StepProgress
+        from apps.programs.models import Step
+
+        # Only initialize if no progress exists yet
+        existing = StepProgress.objects.filter(
+            user=enrollment.user,
+            program=enrollment.program,
+        ).exists()
+        if existing:
+            return
+
+        degrees = enrollment.program.degrees.all().order_by('order_index')
+        first_step_set = False
+
+        for degree in degrees:
+            if not enrollment.can_access_degree(degree):
+                continue
+            steps = degree.steps.all().order_by('order_index')
+            for step in steps:
+                step_status = 'locked'
+                if not first_step_set:
+                    step_status = 'available'
+                    first_step_set = True
+
+                StepProgress.objects.get_or_create(
+                    user=enrollment.user,
+                    step=step,
+                    defaults={
+                        'program': enrollment.program,
+                        'status': step_status,
+                    }
+                )
+
+
+class EnrollmentPaymentsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=['Payments'],
+        summary='List enrollment payments',
+        description=(
+            'Return all payments associated with a specific enrollment, '
+            'ordered by date descending (most recent first). The authenticated '
+            'user must own the enrollment.'
+        ),
+        responses={
+            200: _PaymentListResponseSchema,
+            403: _ErrorResponseSchema,
+            404: _ErrorResponseSchema,
+        },
+    )
+    def get(self, request, enrollment_id):
+        try:
+            enrollment = Enrollment.objects.get(id=enrollment_id)
+        except Enrollment.DoesNotExist:
+            raise NotFoundError('Enrollment does not exist.')
+
+        if enrollment.user_id != request.user.id:
+            raise ForbiddenError('Enrollment belongs to another user.')
+
+        payments = enrollment.payments.all().order_by('-date')
+        serializer = PaymentSerializer(payments, many=True)
+        return Response({'data': serializer.data})
+
+
+class DevPaymentSimulateView(APIView):
+    """DEV ONLY: Simulate MoneyFusion webhook callback for a pending payment.
+
+    This triggers the same webhook processing as a real MoneyFusion callback,
+    allowing E2E testing without a real payment gateway. The endpoint builds
+    a valid signed webhook payload and processes it through the webhook handler.
+
+    Only available when MONEYFUSION_DEV_MODE=True.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=['Payments'],
+        summary='Simulate payment (dev only)',
+        description=(
+            '**Development only.** Simulate a MoneyFusion webhook callback for '
+            'a pending payment. Builds a properly signed webhook payload and '
+            'processes it through the same webhook handler used in production. '
+            'The optional **status** field in the request body controls the '
+            'simulated outcome ("completed" or "failed"); defaults to '
+            '"completed". Returns the updated payment and enrollment state. '
+            'Returns 403 when MONEYFUSION_DEV_MODE is not enabled.'
+        ),
+        request=_DevSimulateRequestSchema,
+        responses={
+            200: _DevSimulateResponseSchema,
+            403: _ErrorResponseSchema,
+            404: _ErrorResponseSchema,
+            409: _ErrorResponseSchema,
+        },
+        examples=[
+            OpenApiExample(
+                name='Simulate completed payment',
+                value={'status': 'completed'},
+                request_only=True,
+            ),
+            OpenApiExample(
+                name='Simulation result',
+                value={
+                    'data': {
+                        'paymentId': 'pay_abc456',
+                        'status': 'completed',
+                        'enrollmentPaymentStatus': 'partial',
+                        'amountPaid': 25000,
+                        'message': 'Payment simulated as completed.',
+                    }
+                },
+                response_only=True,
+                status_codes=['200'],
+            ),
+        ],
+    )
+    @transaction.atomic
+    def post(self, request, payment_id):
+        from django.conf import settings as django_settings
+
+        if not django_settings.MONEYFUSION_DEV_MODE:
+            return Response(
+                {'error': {'code': 'FORBIDDEN', 'message': 'Only available in dev mode.'}},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            payment = Payment.objects.select_related('enrollment').get(id=payment_id)
+        except Payment.DoesNotExist:
+            raise NotFoundError('Payment does not exist.')
+
+        if payment.enrollment.user_id != request.user.id:
+            raise ForbiddenError('Payment belongs to another user.')
+
+        if payment.status != 'pending':
+            raise ConflictError(f'Payment is already {payment.status}.')
+
+        # Simulate the desired outcome (default: completed)
+        simulate_status = request.data.get('status', 'completed')
+        if simulate_status not in ('completed', 'failed'):
+            raise ValidationError(
+                'status must be "completed" or "failed".',
+                [{'field': 'status', 'message': 'Must be "completed" or "failed"'}],
+            )
+
+        # Build webhook payload with valid signature
+        payload = MoneyFusionService.build_dev_webhook_payload(payment)
+        payload['status'] = simulate_status
+
+        # Re-sign with the actual status
+        import hashlib as _hashlib
+        import hmac as _hmac
+        import time as _time
+
+        payload['timestamp'] = str(int(_time.time()))
+        fields = ['amount', 'currency', 'method', 'orderId', 'phone',
+                  'status', 'timestamp', 'transactionId']
+        values = [str(payload.get(f, '')) for f in fields]
+        signing_string = '|'.join(values)
+        payload['signature'] = _hmac.new(
+            django_settings.MONEYFUSION_WEBHOOK_SECRET.encode(),
+            signing_string.encode(),
+            _hashlib.sha256,
+        ).hexdigest()
+
+        # Process through the webhook handler
+        webhook_view = PaymentWebhookView()
+        from rest_framework.test import APIRequestFactory
+        factory = APIRequestFactory()
+        webhook_request = factory.post(
+            '/api/v1/payments/webhook',
+            data=payload,
+            format='json',
+        )
+        webhook_view.post(webhook_request)
+
+        # Reload payment to get updated status
+        payment.refresh_from_db()
+        enrollment = payment.enrollment
+        enrollment.refresh_from_db()
+
+        return Response({
+            'data': {
+                'paymentId': payment.id,
+                'status': payment.status,
+                'enrollmentPaymentStatus': enrollment.payment_status,
+                'amountPaid': enrollment.amount_paid,
+                'message': f'Payment simulated as {simulate_status}.',
+            }
+        })
