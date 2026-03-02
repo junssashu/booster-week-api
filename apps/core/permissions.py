@@ -7,9 +7,7 @@ class IsOwner(BasePermission):
     def has_object_permission(self, request, view, obj):
         if hasattr(obj, 'user_id'):
             return obj.user_id == request.user.id
-        if hasattr(obj, 'author_id'):
-            return obj.author_id == request.user.id
-        return False
+        return obj.author_id == request.user.id if hasattr(obj, 'author_id') else False
 
 
 class IsAdmin(BasePermission):

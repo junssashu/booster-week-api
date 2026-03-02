@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Asset, Degree, FormFieldDef, Program, QCMQuestion, Step
+from .models import Asset, Degree, DegreeFile, FormFieldDef, Program, QCMQuestion, Step
 
 
 class ProgramListSerializer(serializers.ModelSerializer):
@@ -45,6 +45,15 @@ class ProgramDetailSerializer(serializers.ModelSerializer):
                   'durationWeeks', 'presentationVideoUrl', 'degrees', 'createdAt']
 
 
+class DegreeFileSerializer(serializers.ModelSerializer):
+    orderIndex = serializers.IntegerField(source='order_index')
+    externalUrl = serializers.CharField(source='external_url', allow_null=True)
+
+    class Meta:
+        model = DegreeFile
+        fields = ['id', 'type', 'title', 'description', 'externalUrl', 'orderIndex']
+
+
 class StepListSerializer(serializers.ModelSerializer):
     degreeId = serializers.CharField(source='degree_id')
     orderIndex = serializers.IntegerField(source='order_index')
@@ -52,14 +61,27 @@ class StepListSerializer(serializers.ModelSerializer):
     status = serializers.SerializerMethodField()
     hasConsigne = serializers.SerializerMethodField()
     consigneAccepted = serializers.SerializerMethodField()
+    videoCount = serializers.SerializerMethodField()
+    audioCount = serializers.SerializerMethodField()
+    documentCount = serializers.SerializerMethodField()
 
     class Meta:
         model = Step
         fields = ['id', 'degreeId', 'title', 'description', 'orderIndex',
-                  'assetCount', 'status', 'hasConsigne', 'consigneAccepted']
+                  'assetCount', 'status', 'hasConsigne', 'consigneAccepted',
+                  'videoCount', 'audioCount', 'documentCount']
 
     def get_assetCount(self, obj):
         return obj.assets.count()
+
+    def get_videoCount(self, obj):
+        return obj.assets.filter(type='video').count()
+
+    def get_audioCount(self, obj):
+        return obj.assets.filter(type='audio').count()
+
+    def get_documentCount(self, obj):
+        return obj.assets.filter(type='pdf').count()
 
     def get_status(self, obj):
         user = self.context.get('user')
@@ -84,19 +106,55 @@ class DegreeDetailSerializer(serializers.ModelSerializer):
     programId = serializers.CharField(source='program_id')
     orderIndex = serializers.IntegerField(source='order_index')
     isAccessible = serializers.SerializerMethodField()
+    presentationVideoUrl = serializers.SerializerMethodField()
+    consigne = serializers.SerializerMethodField()
     steps = serializers.SerializerMethodField()
+    files = serializers.SerializerMethodField()
 
     class Meta:
         model = Degree
         fields = ['id', 'programId', 'title', 'description', 'orderIndex',
-                  'isAccessible', 'steps']
+                  'isAccessible', 'presentationVideoUrl', 'consigne', 'steps', 'files']
 
     def get_isAccessible(self, obj):
         return self.context.get('is_accessible', True)
 
+    def get_presentationVideoUrl(self, obj):
+        """Return the external_url of the first video asset found across steps."""
+        for step in obj.steps.all().order_by('order_index'):
+            for asset in step.assets.all().order_by('order_index'):
+                if asset.type == 'video':
+                    return asset.external_url
+        return None
+
+    def get_consigne(self, obj):
+        """Return the consigne from the first step that has one."""
+        for step in obj.steps.all().order_by('order_index'):
+            for asset in step.assets.all().order_by('order_index'):
+                if asset.type == 'consigne':
+                    user = self.context.get('user')
+                    accepted = False
+                    if user:
+                        from apps.progress.models import ConsigneAcceptance
+                        accepted = ConsigneAcceptance.objects.filter(
+                            user=user, step=step
+                        ).exists()
+                    return {
+                        'stepId': step.id,
+                        'assetId': asset.id,
+                        'title': asset.title,
+                        'consigneText': asset.consigne_text,
+                        'accepted': accepted,
+                    }
+        return None
+
     def get_steps(self, obj):
         steps = obj.steps.all().order_by('order_index')
         return StepListSerializer(steps, many=True, context=self.context).data
+
+    def get_files(self, obj):
+        files = obj.files.all().order_by('order_index')
+        return DegreeFileSerializer(files, many=True).data
 
 
 class AssetSummarySerializer(serializers.ModelSerializer):

@@ -371,7 +371,7 @@ class DegreeDetailView(APIView):
     )
     def get(self, request, degree_id):
         try:
-            degree = Degree.objects.select_related('program').prefetch_related('steps__assets').get(id=degree_id)
+            degree = Degree.objects.select_related('program').prefetch_related('steps__assets', 'files').get(id=degree_id)
         except Degree.DoesNotExist:
             raise NotFoundError('Degree does not exist.')
 

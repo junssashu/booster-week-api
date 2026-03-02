@@ -54,6 +54,39 @@ class Degree(models.Model):
         return self.title
 
 
+DEGREE_FILE_TYPES = [
+    ('pdf', 'PDF'),
+    ('audio', 'Audio'),
+    ('video', 'Video'),
+]
+
+
+class DegreeFile(models.Model):
+    id = models.CharField(max_length=50, primary_key=True, default=None, editable=False)
+    degree = models.ForeignKey(Degree, on_delete=models.CASCADE, related_name='files')
+    type = models.CharField(max_length=20, choices=DEGREE_FILE_TYPES)
+    title = models.CharField(max_length=255)
+    description = models.TextField(null=True, blank=True)
+    external_url = models.TextField(null=True, blank=True)
+    order_index = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'degree_files'
+        ordering = ['order_index']
+        unique_together = [['degree', 'order_index']]
+        indexes = [models.Index(fields=['degree'])]
+
+    def save(self, *args, **kwargs):
+        if not self.id:
+            self.id = generate_prefixed_id('dfile')
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'{self.type}: {self.title}'
+
+
 class Step(models.Model):
     id = models.CharField(max_length=50, primary_key=True, default=None, editable=False)
     degree = models.ForeignKey(Degree, on_delete=models.CASCADE, related_name='steps')

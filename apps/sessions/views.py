@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from apps.core.exceptions import NotFoundError
 from apps.core.pagination import CustomPagination
 
-from .models import LiveReplaySession
+from .models import LiveReplaySession, SessionAttendance
 from .serializers import SessionSerializer
 
 
@@ -83,7 +83,7 @@ class SessionListView(APIView):
         },
     )
     def get(self, request):
-        qs = LiveReplaySession.objects.all()
+        qs = LiveReplaySession.objects.prefetch_related('attendances').all()
 
         is_live = request.query_params.get('isLive')
         if is_live is not None:
@@ -99,7 +99,7 @@ class SessionListView(APIView):
 
         paginator = CustomPagination()
         page = paginator.paginate_queryset(qs, request)
-        serializer = SessionSerializer(page, many=True)
+        serializer = SessionSerializer(page, many=True, context={'user': request.user})
         return paginator.get_paginated_response(serializer.data)
 
 
@@ -139,9 +139,68 @@ class SessionDetailView(APIView):
     )
     def get(self, request, session_id):
         try:
-            session = LiveReplaySession.objects.get(id=session_id)
+            session = LiveReplaySession.objects.prefetch_related('attendances').get(id=session_id)
         except LiveReplaySession.DoesNotExist:
             raise NotFoundError('Session does not exist.')
 
-        serializer = SessionSerializer(session)
+        serializer = SessionSerializer(session, context={'user': request.user})
         return Response(serializer.data)
+
+
+class JoinSessionView(APIView):
+    @extend_schema(
+        tags=['Sessions'],
+        operation_id='session_join',
+        summary='Join a session',
+        description='Record that the authenticated user has joined a session.',
+        parameters=[
+            OpenApiParameter(
+                name='session_id',
+                type=str,
+                location=OpenApiParameter.PATH,
+                description='ID of the session to join.',
+            ),
+        ],
+        responses={
+            200: inline_serializer(
+                name='JoinSessionResponse',
+                fields={
+                    'joined': drf_serializers.BooleanField(),
+                    'joinedAt': drf_serializers.DateTimeField(),
+                    'attendeeCount': drf_serializers.IntegerField(),
+                },
+            ),
+            401: inline_serializer(
+                name='JoinSessionUnauthorizedResponse',
+                fields={
+                    'error': drf_serializers.CharField(),
+                },
+            ),
+            404: inline_serializer(
+                name='JoinSessionNotFoundResponse',
+                fields={
+                    'error': drf_serializers.CharField(),
+                },
+            ),
+        },
+    )
+    def post(self, request, session_id):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response({'error': 'Authentication required'}, status=401)
+
+        try:
+            session = LiveReplaySession.objects.get(id=session_id)
+        except LiveReplaySession.DoesNotExist:
+            return Response({'error': 'Session not found'}, status=404)
+
+        attendance, created = SessionAttendance.objects.get_or_create(
+            session=session,
+            user=user,
+        )
+
+        return Response({
+            'joined': True,
+            'joinedAt': attendance.joined_at.isoformat(),
+            'attendeeCount': session.attendances.count(),
+        })
