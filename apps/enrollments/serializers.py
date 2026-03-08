@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Enrollment, Payment
+from .models import Enrollment, Payment, PromoCode
 
 
 class PaymentSerializer(serializers.ModelSerializer):
@@ -14,6 +14,7 @@ class PaymentSerializer(serializers.ModelSerializer):
 class EnrollmentCreateSerializer(serializers.Serializer):
     programId = serializers.CharField()
     paymentType = serializers.ChoiceField(choices=['full', 'installment'])
+    promoCode = serializers.CharField(max_length=10, required=False, allow_blank=True)
 
 
 class EnrollmentListSerializer(serializers.ModelSerializer):
@@ -65,15 +66,32 @@ class EnrollmentDetailSerializer(serializers.ModelSerializer):
         return obj.installment_amount
 
     def get_degreeAccess(self, obj):
+        from apps.progress.models import StepProgress
         degrees = obj.program.degrees.all().order_by('order_index')
-        return [
-            {
+        result = []
+        for d in degrees:
+            accessible, lock_reason = obj.can_access_degree_detail(d)
+            # Calculate degree completion percentage for the enrolled user
+            steps = d.steps.all()
+            total_steps = steps.count()
+            if total_steps > 0:
+                progress_records = dict(
+                    StepProgress.objects.filter(
+                        user=obj.user, step__in=steps
+                    ).values_list('step_id', 'completion_percentage')
+                )
+                total_pct = sum(progress_records.get(step.id, 0) for step in steps)
+                completion_pct = round(total_pct / total_steps)
+            else:
+                completion_pct = 0
+            result.append({
                 'degreeId': d.id,
                 'orderIndex': d.order_index,
-                'accessible': obj.can_access_degree(d),
-            }
-            for d in degrees
-        ]
+                'accessible': accessible,
+                'lockReason': lock_reason,
+                'completionPercentage': completion_pct,
+            })
+        return result
 
 
 class PaymentInitiateSerializer(serializers.Serializer):
@@ -91,3 +109,20 @@ class PaymentStatusSerializer(serializers.ModelSerializer):
     class Meta:
         model = Payment
         fields = ['paymentId', 'transactionId', 'status', 'amount', 'method', 'date', 'transactionRef']
+
+
+class PromoCodeSerializer(serializers.ModelSerializer):
+    discountPercent = serializers.IntegerField(source='discount_percent')
+    maxUses = serializers.IntegerField(source='max_uses')
+    currentUses = serializers.IntegerField(source='current_uses', read_only=True)
+    expiresAt = serializers.DateTimeField(source='expires_at', allow_null=True)
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    isValid = serializers.BooleanField(source='is_valid', read_only=True)
+
+    class Meta:
+        model = PromoCode
+        fields = ['id', 'code', 'discountPercent', 'maxUses', 'currentUses', 'isValid', 'expiresAt', 'createdAt']
+
+
+class PromoCodeValidateSerializer(serializers.Serializer):
+    code = serializers.CharField(max_length=10)

@@ -46,6 +46,13 @@ def check_step_completion(user, step):
         sp.status = 'completed'
         sp.save()
 
+    # For steps without QCM, set completion_percentage to 100 when completed.
+    # Steps with QCM have their completion_percentage set by the QCM submit view.
+    has_qcm = step.assets.filter(type='qcm').exists()
+    if not has_qcm and sp.completion_percentage != 100:
+        sp.completion_percentage = 100
+        sp.save(update_fields=['completion_percentage', 'updated_at'])
+
     # Unlock next step
     next_step_info = unlock_next_step(user, step)
     return True, next_step_info

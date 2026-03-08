@@ -46,6 +46,20 @@ class ConsigneAcceptance(models.Model):
         unique_together = [['user', 'step']]
 
 
+class PriseDeContactAcceptance(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='pdc_acceptances')
+    prise_de_contact = models.ForeignKey(
+        'programs.PriseDeContact', on_delete=models.CASCADE,
+        related_name='acceptances'
+    )
+    accepted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [['user', 'prise_de_contact']]
+        db_table = 'progress_prisedecontactacceptance'
+
+
 class FormSubmission(models.Model):
     id = models.CharField(max_length=50, primary_key=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='form_submissions')
@@ -67,6 +81,7 @@ class StepProgress(models.Model):
     step = models.ForeignKey(Step, on_delete=models.CASCADE, related_name='progress_records')
     program = models.ForeignKey(Program, on_delete=models.CASCADE, related_name='step_progress')
     status = models.CharField(max_length=20, default='locked')  # locked, available, completed
+    completion_percentage = models.IntegerField(default=0)  # 0-100, from QCM score
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

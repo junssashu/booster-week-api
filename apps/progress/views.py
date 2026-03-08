@@ -11,11 +11,12 @@ from rest_framework.views import APIView
 from apps.core.exceptions import ForbiddenError, NotFoundError, PaymentRequiredError, ValidationError
 from apps.core.throttles import QCMThrottle
 from apps.core.utils import generate_prefixed_id
+from django.shortcuts import get_object_or_404
 from apps.enrollments.models import Enrollment
-from apps.programs.models import Asset, Step
+from apps.programs.models import Asset, Step, PriseDeContact
 
 from .engine import check_step_completion, get_step_progress_info
-from .models import AssetCompletion, ConsigneAcceptance, FormSubmission, QCMAttempt, StepProgress
+from .models import AssetCompletion, ConsigneAcceptance, FormSubmission, PriseDeContactAcceptance, QCMAttempt, StepProgress
 
 
 def _require_enrollment_and_access(user, asset_or_step):
@@ -32,7 +33,10 @@ def _require_enrollment_and_access(user, asset_or_step):
     if not enrollment or enrollment.payment_status == 'pending':
         raise PaymentRequiredError('You must be enrolled and have paid.')
 
-    if not enrollment.can_access_degree(degree):
+    accessible, lock_reason = enrollment.can_access_degree_detail(degree)
+    if not accessible:
+        if lock_reason == 'completion':
+            raise ForbiddenError('Complete previous degrees with at least 70% average to unlock this degree.')
         raise ForbiddenError('Complete second payment to unlock this degree.')
 
     sp = StepProgress.objects.filter(user=user, step=step).first()
@@ -412,6 +416,14 @@ class QCMSubmitView(APIView):
             answers=answers,
         )
 
+        # Update step completion_percentage with QCM score (use best score)
+        sp = StepProgress.objects.filter(user=request.user, step=step).first()
+        if sp:
+            rounded_score = round(score)
+            if rounded_score > sp.completion_percentage:
+                sp.completion_percentage = rounded_score
+                sp.save(update_fields=['completion_percentage', 'updated_at'])
+
         # If passed, mark as completed
         if passed:
             AssetCompletion.objects.get_or_create(
@@ -595,4 +607,19 @@ class ConsigneAcceptView(APIView):
                 'consigneAccepted': True,
                 'acceptedAt': acceptance.accepted_at.isoformat(),
             }
+        })
+
+
+class PriseDeContactAcceptView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pdc_id):
+        pdc = get_object_or_404(PriseDeContact, id=pdc_id)
+        acceptance, created = PriseDeContactAcceptance.objects.get_or_create(
+            user=request.user,
+            prise_de_contact=pdc,
+        )
+        return Response({
+            'accepted': True,
+            'acceptedAt': acceptance.accepted_at.isoformat(),
         })

@@ -10,4 +10,7 @@ urlpatterns = [
     path('degrees/<str:degree_id>/steps', views.DegreeStepsView.as_view(), name='degree-steps'),
     path('steps/<str:step_id>', views.StepDetailView.as_view(), name='step-detail'),
     path('assets/<str:asset_id>', views.AssetDetailView.as_view(), name='asset-detail'),
+    path('programs/<str:program_id>/prise-de-contact', views.ProgramPriseDeContactView.as_view(), name='program-pdc'),
+    path('degrees/<str:degree_id>/prise-de-contact', views.DegreePriseDeContactView.as_view(), name='degree-pdc'),
+    path('steps/<str:step_id>/prise-de-contact', views.StepPriseDeContactView.as_view(), name='step-pdc'),
 ]

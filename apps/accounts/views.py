@@ -1,9 +1,13 @@
+import io
 import random
 import string
 from datetime import timedelta
 
+from django.conf import settings
 from django.utils import timezone
+from minio import Minio
 from rest_framework import status
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -13,6 +17,7 @@ from drf_spectacular.utils import extend_schema, inline_serializer, OpenApiExamp
 from rest_framework import serializers as drf_serializers
 
 from apps.core.exceptions import ConflictError, NotFoundError, ValidationError
+from apps.core.storage import build_minio_url, resolve_url
 from apps.core.throttles import AuthRateThrottle, ForgotPasswordThrottle
 
 from .models import PasswordResetCode, RefreshTokenRecord, User
@@ -26,6 +31,20 @@ from .serializers import (
     ResetPasswordSerializer,
     UserSerializer,
 )
+
+
+def get_minio_client():
+    endpoint = (
+        f"{settings.MINIO_ENDPOINT}:{settings.MINIO_PORT}"
+        if settings.MINIO_PORT not in (80, 443)
+        else settings.MINIO_ENDPOINT
+    )
+    return Minio(
+        endpoint,
+        access_key=settings.MINIO_ACCESS_KEY,
+        secret_key=settings.MINIO_SECRET_KEY,
+        secure=settings.MINIO_USE_SSL,
+    )
 
 
 def _build_token_response(user):
@@ -768,6 +787,153 @@ class ProfileView(APIView):
 
         user.save()
         return Response(UserSerializer(user).data)
+
+
+class AvatarUploadView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser]
+
+    @extend_schema(
+        tags=['Users'],
+        summary='Upload or update profile avatar',
+        description=(
+            'Upload a profile picture (JPEG/PNG, max 5 MB). '
+            'The image is stored in MinIO and the public URL is returned.'
+        ),
+        request={
+            'multipart/form-data': inline_serializer(
+                name='AvatarUploadRequest',
+                fields={
+                    'avatar': drf_serializers.FileField(
+                        help_text='Image file (JPEG or PNG, max 5 MB).',
+                    ),
+                },
+            ),
+        },
+        responses={
+            200: inline_serializer(
+                name='AvatarUploadResponse',
+                fields={
+                    'data': inline_serializer(
+                        name='AvatarUploadData',
+                        fields={
+                            'avatarUrl': drf_serializers.URLField(),
+                        },
+                    ),
+                },
+            ),
+            422: inline_serializer(
+                name='AvatarUploadValidationError',
+                fields={
+                    'error': drf_serializers.DictField(
+                        help_text='Validation error (missing file, wrong type, too large).',
+                    ),
+                },
+            ),
+        },
+        examples=[
+            OpenApiExample(
+                name='Avatar upload success',
+                response_only=True,
+                status_codes=['200'],
+                value={
+                    'data': {
+                        'avatarUrl': 'https://storage.example.com/documents/avatars/abc123.jpg',
+                    }
+                },
+            ),
+        ],
+    )
+    def post(self, request):
+        file = request.FILES.get('avatar')
+        if not file:
+            raise ValidationError('No file provided.', [
+                {'field': 'avatar', 'message': 'An image file is required.'},
+            ])
+
+        # Validate content type
+        allowed_types = ('image/jpeg', 'image/png', 'image/webp')
+        if file.content_type not in allowed_types:
+            raise ValidationError('Invalid file type.', [
+                {'field': 'avatar', 'message': 'Only JPEG, PNG, and WebP images are accepted.'},
+            ])
+
+        # Validate size (5 MB max)
+        max_size = 5 * 1024 * 1024
+        if file.size > max_size:
+            raise ValidationError('File too large.', [
+                {'field': 'avatar', 'message': 'Image must be smaller than 5 MB.'},
+            ])
+
+        user = request.user
+        bucket = settings.MINIO_DOCUMENT_BUCKET
+        key = f"avatars/{user.id}.jpg"
+
+        # Upload to MinIO
+        client = get_minio_client()
+        file_data = file.read()
+        client.put_object(
+            bucket,
+            key,
+            io.BytesIO(file_data),
+            length=len(file_data),
+            content_type=file.content_type,
+        )
+
+        # Save minio:// URL in database
+        minio_url = build_minio_url(bucket, key)
+        user.avatar_url = minio_url
+        user.save(update_fields=['avatar_url'])
+
+        # Return resolved public URL
+        public_url = resolve_url(minio_url)
+        return Response({
+            'data': {
+                'avatarUrl': public_url,
+            }
+        })
+
+    @extend_schema(
+        tags=['Users'],
+        summary='Remove profile avatar',
+        description='Delete the current profile avatar and reset to default.',
+        responses={
+            200: inline_serializer(
+                name='AvatarDeleteResponse',
+                fields={
+                    'data': inline_serializer(
+                        name='AvatarDeleteData',
+                        fields={
+                            'message': drf_serializers.CharField(),
+                        },
+                    ),
+                },
+            ),
+        },
+    )
+    def delete(self, request):
+        user = request.user
+
+        # Remove from MinIO (best effort)
+        if user.avatar_url and user.avatar_url.startswith('minio://'):
+            try:
+                path = user.avatar_url[len('minio://'):]
+                parts = path.split('/', 1)
+                if len(parts) == 2:
+                    bucket, key = parts
+                    client = get_minio_client()
+                    client.remove_object(bucket, key)
+            except Exception:
+                pass  # Best-effort deletion
+
+        user.avatar_url = None
+        user.save(update_fields=['avatar_url'])
+
+        return Response({
+            'data': {
+                'message': 'Avatar supprime avec succes.',
+            }
+        })
 
 
 class ChangePasswordView(APIView):

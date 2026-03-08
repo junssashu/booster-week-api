@@ -24,6 +24,14 @@ services:
       - "8001:8000"
     env_file:
       - .env
+    environment:
+      - MINIO_ENDPOINT=storage.bibliothequessolidaires.org
+      - MINIO_PORT=443
+      - MINIO_USE_SSL=true
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-app-storage-user}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-AppStorage2026Secure!}
+      - MINIO_AUDIO_BUCKET=audios
+      - MINIO_DOCUMENT_BUCKET=documents
     depends_on:
       db:
         condition: service_healthy

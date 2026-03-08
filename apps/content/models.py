@@ -3,6 +3,24 @@ import uuid
 from django.db import models
 
 
+class ContactSubmission(models.Model):
+    TYPE_CHOICES = [
+        ('contact', 'Contact'),
+        ('bug', 'Bug Report'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255)
+    email = models.EmailField(max_length=255, blank=True)
+    message = models.TextField()
+    type = models.CharField(max_length=10, choices=TYPE_CHOICES, default='contact')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'contact_submissions'
+        ordering = ['-created_at']
+
+
 class FAQItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     question = models.TextField()

@@ -2,6 +2,8 @@ import re
 
 from rest_framework import serializers
 
+from apps.core.storage import resolve_url
+
 from .models import User
 
 
@@ -73,7 +75,7 @@ class UserSerializer(serializers.ModelSerializer):
     firstName = serializers.CharField(source='first_name')
     lastName = serializers.CharField(source='last_name')
     dateOfBirth = serializers.DateField(source='date_of_birth', allow_null=True, required=False)
-    avatarUrl = serializers.URLField(source='avatar_url', allow_null=True, required=False)
+    avatarUrl = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
 
     class Meta:
@@ -81,6 +83,11 @@ class UserSerializer(serializers.ModelSerializer):
         fields = ['id', 'firstName', 'lastName', 'phone', 'email',
                   'dateOfBirth', 'city', 'country', 'avatarUrl', 'createdAt']
         read_only_fields = ['id', 'phone', 'createdAt']
+
+    def get_avatarUrl(self, obj):
+        if obj.avatar_url:
+            return resolve_url(obj.avatar_url)
+        return None
 
 
 class ProfileUpdateSerializer(serializers.Serializer):

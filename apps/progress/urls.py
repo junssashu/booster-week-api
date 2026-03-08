@@ -8,4 +8,5 @@ urlpatterns = [
     path('assets/<str:asset_id>/qcm/submit', views.QCMSubmitView.as_view(), name='qcm-submit'),
     path('assets/<str:asset_id>/form/submit', views.FormSubmitView.as_view(), name='form-submit'),
     path('steps/<str:step_id>/consigne/accept', views.ConsigneAcceptView.as_view(), name='consigne-accept'),
+    path('prise-de-contact/<str:pdc_id>/accept', views.PriseDeContactAcceptView.as_view(), name='pdc-accept'),
 ]

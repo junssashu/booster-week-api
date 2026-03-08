@@ -9,7 +9,8 @@ from apps.core.utils import generate_prefixed_id
 class Testimony(models.Model):
     id = models.CharField(max_length=50, primary_key=True, default=None, editable=False)
     author = models.ForeignKey(User, on_delete=models.CASCADE, related_name='testimonies')
-    content = models.TextField()
+    content = models.TextField(blank=True, default='')
+    video_url = models.TextField(null=True, blank=True)
     like_count = models.IntegerField(default=0)
     heart_count = models.IntegerField(default=0)
     comment_count = models.IntegerField(default=0)

@@ -24,6 +24,13 @@ services:
       - .env
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
+      - MINIO_ENDPOINT=storage.bibliothequessolidaires.org
+      - MINIO_PORT=443
+      - MINIO_USE_SSL=true
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_AUDIO_BUCKET=audios
+      - MINIO_DOCUMENT_BUCKET=documents
     depends_on:
       db:
         condition: service_healthy

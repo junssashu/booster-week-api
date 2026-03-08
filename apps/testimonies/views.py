@@ -27,16 +27,16 @@ class TestimonyListCreateView(APIView):
         operation_id='testimonies_list',
         summary='List testimonies (paginated)',
         description=(
-            'Returns a paginated list of testimonies. Supports sorting by createdAt, '
-            'likeCount, or heartCount in ascending or descending order. '
-            'Authenticated users receive userHasLiked and userHasHearted flags.'
+            'Returns a paginated list of testimonies. Supports sorting by createdAt '
+            'or likeCount in ascending or descending order. '
+            'Authenticated users receive userHasLiked flag.'
         ),
         parameters=[
             inline_serializer(
                 name='TestimonyListQueryParams',
                 fields={
                     'sort': drf_serializers.ChoiceField(
-                        choices=['createdAt', 'likeCount', 'heartCount'],
+                        choices=['createdAt', 'likeCount'],
                         required=False,
                         default='createdAt',
                         help_text='Field to sort by.',
@@ -80,7 +80,6 @@ class TestimonyListCreateView(APIView):
         sort_map = {
             'createdAt': 'created_at',
             'likeCount': 'like_count',
-            'heartCount': 'heart_count',
         }
         db_field = sort_map.get(sort, 'created_at')
         if order == 'desc':
@@ -100,7 +99,7 @@ class TestimonyListCreateView(APIView):
         summary='Create a testimony',
         description=(
             'Creates a new testimony authored by the authenticated user. '
-            'Content must be between 10 and 5000 characters.'
+            'At least one of content (text) or videoUrl must be provided.'
         ),
         request=TestimonyCreateSerializer,
         responses={
@@ -124,9 +123,12 @@ class TestimonyListCreateView(APIView):
             details = [{'field': f, 'message': str(m[0])} for f, m in serializer.errors.items()]
             raise ValidationError('Validation failed.', details)
 
+        content = serializer.validated_data.get('content', '')
+        video_url = serializer.validated_data.get('videoUrl', '') or serializer.validated_data.get('video_url', '')
         testimony = Testimony.objects.create(
             author=request.user,
-            content=serializer.validated_data['content'],
+            content=content,
+            video_url=video_url,
         )
 
         data = TestimonySerializer(testimony, context={'user': request.user}).data
@@ -215,63 +217,6 @@ class TestimonyLikeView(APIView):
                 'testimonyId': testimony.id,
                 'liked': liked,
                 'likeCount': testimony.like_count,
-            }
-        })
-
-
-class TestimonyHeartView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(
-        tags=['Testimonies'],
-        operation_id='testimonies_heart_toggle',
-        summary='Toggle heart on a testimony',
-        description='Toggles the heart reaction on a testimony for the authenticated user. Hearting again removes the heart.',
-        request=None,
-        responses={
-            200: inline_serializer(
-                name='TestimonyHeartResponse',
-                fields={
-                    'data': inline_serializer(
-                        name='TestimonyHeartData',
-                        fields={
-                            'testimonyId': drf_serializers.CharField(),
-                            'hearted': drf_serializers.BooleanField(help_text='Whether the user now hearts this testimony.'),
-                            'heartCount': drf_serializers.IntegerField(help_text='Updated total heart count.'),
-                        },
-                    ),
-                },
-            ),
-        },
-    )
-    def post(self, request, testimony_id):
-        try:
-            testimony = Testimony.objects.get(id=testimony_id)
-        except Testimony.DoesNotExist:
-            raise NotFoundError('Testimony does not exist.')
-
-        reaction = TestimonyReaction.objects.filter(
-            testimony=testimony, user=request.user, reaction_type='heart'
-        ).first()
-
-        if reaction:
-            reaction.delete()
-            Testimony.objects.filter(id=testimony_id).update(heart_count=F('heart_count') - 1)
-            testimony.refresh_from_db()
-            hearted = False
-        else:
-            TestimonyReaction.objects.create(
-                testimony=testimony, user=request.user, reaction_type='heart'
-            )
-            Testimony.objects.filter(id=testimony_id).update(heart_count=F('heart_count') + 1)
-            testimony.refresh_from_db()
-            hearted = True
-
-        return Response({
-            'data': {
-                'testimonyId': testimony.id,
-                'hearted': hearted,
-                'heartCount': testimony.heart_count,
             }
         })
 

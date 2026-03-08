@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     'apps.sessions',
     'apps.testimonies',
     'apps.content',
+    'apps.admin_api',
 ]
 
 MIDDLEWARE = [
@@ -119,6 +120,7 @@ REST_FRAMEWORK = {
         'payment': '5/15min',
         'qcm': '20/15min',
         'testimony': '5/15min',
+        'contact_submit': '5/hour',
     },
 }
 
@@ -142,6 +144,21 @@ MONEYFUSION_BASE_URL = os.getenv('MONEYFUSION_BASE_URL', 'https://api.moneyfusio
 MONEYFUSION_WEBHOOK_URL = os.getenv('MONEYFUSION_WEBHOOK_URL', 'https://api.boosterweek.com/api/v1/payments/webhook')
 MONEYFUSION_DEV_MODE = os.getenv('MONEYFUSION_DEV_MODE', 'True').lower() == 'true'
 
+# MinIO / S3-compatible storage
+MINIO_ENDPOINT = os.environ.get('MINIO_ENDPOINT', 'storage.bibliothequessolidaires.org')
+MINIO_PORT = int(os.environ.get('MINIO_PORT', '443'))
+MINIO_USE_SSL = os.environ.get('MINIO_USE_SSL', 'true').lower() == 'true'
+MINIO_ACCESS_KEY = os.environ.get('MINIO_ACCESS_KEY', '')
+MINIO_SECRET_KEY = os.environ.get('MINIO_SECRET_KEY', '')
+MINIO_AUDIO_BUCKET = os.environ.get('MINIO_AUDIO_BUCKET', 'audios')
+MINIO_DOCUMENT_BUCKET = os.environ.get('MINIO_DOCUMENT_BUCKET', 'documents')
+
+# App config
+BACKGROUND_MUSIC_URL = os.getenv(
+    'BACKGROUND_MUSIC_URL',
+    'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3',
+)
+
 # drf-spectacular (OpenAPI / Swagger)
 SPECTACULAR_SETTINGS = {
     'TITLE': 'Booster Week API',
@@ -154,6 +171,7 @@ SPECTACULAR_SETTINGS = {
     'SERVE_INCLUDE_SCHEMA': False,
     'SCHEMA_PATH_PREFIX': '/api/v1/',
     'TAGS': [
+        {'name': 'Config', 'description': 'Configuration publique de l\'application'},
         {'name': 'Auth', 'description': 'Inscription, connexion, tokens JWT, mot de passe'},
         {'name': 'Users', 'description': 'Profil utilisateur'},
         {'name': 'Programs', 'description': 'Programmes, degrés, étapes, assets'},

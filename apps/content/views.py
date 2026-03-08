@@ -1,10 +1,15 @@
 from drf_spectacular.utils import extend_schema, inline_serializer, OpenApiExample
 from rest_framework import serializers as drf_serializers
+from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import ContactInfo, FAQItem
+from apps.core.exceptions import ValidationError
+from apps.core.throttles import ContactSubmitThrottle
+
+from .models import ContactInfo, ContactSubmission, FAQItem
+from .serializers import ContactSubmissionSerializer
 
 
 class FAQView(APIView):
@@ -149,3 +154,72 @@ class ContactView(APIView):
                 'whatsapp': info.whatsapp,
             }
         })
+
+
+class ContactSubmitView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [ContactSubmitThrottle]
+
+    @extend_schema(
+        tags=['Content'],
+        operation_id='contact_submit',
+        summary='Submit a contact or bug report form',
+        description=(
+            'Creates a ContactSubmission record. No authentication required. '
+            'Rate limited to 5 submissions per hour per IP.'
+        ),
+        request=ContactSubmissionSerializer,
+        responses={
+            201: inline_serializer(
+                name='ContactSubmitResponse',
+                fields={
+                    'data': inline_serializer(
+                        name='ContactSubmitData',
+                        fields={
+                            'id': drf_serializers.CharField(),
+                            'message': drf_serializers.CharField(),
+                        },
+                    ),
+                },
+            ),
+        },
+        examples=[
+            OpenApiExample(
+                name='Contact submission',
+                request_only=True,
+                value={
+                    'name': 'Jean Dupont',
+                    'email': 'jean@example.com',
+                    'message': 'Bonjour, j\'ai une question.',
+                    'type': 'contact',
+                },
+            ),
+            OpenApiExample(
+                name='Bug report submission',
+                request_only=True,
+                value={
+                    'name': 'Marie Martin',
+                    'email': 'marie@example.com',
+                    'message': 'L\'application plante au démarrage.',
+                    'type': 'bug',
+                },
+            ),
+        ],
+    )
+    def post(self, request):
+        serializer = ContactSubmissionSerializer(data=request.data)
+        if not serializer.is_valid():
+            details = [{'field': f, 'message': str(m[0])} for f, m in serializer.errors.items()]
+            raise ValidationError('Validation failed.', details)
+
+        submission = ContactSubmission.objects.create(
+            name=serializer.validated_data['name'],
+            email=serializer.validated_data['email'],
+            message=serializer.validated_data['message'],
+            type=serializer.validated_data['type'],
+        )
+
+        return Response(
+            {'data': {'id': str(submission.id), 'message': 'Submission received.'}},
+            status=status.HTTP_201_CREATED,
+        )

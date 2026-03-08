@@ -7,10 +7,11 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.content.models import ContactInfo, FAQItem
 from apps.enrollments.models import Enrollment, Payment
-from apps.programs.models import Asset, Degree, DegreeFile, FormFieldDef, Program, QCMQuestion, Step
+from apps.programs.models import Asset, Degree, DegreeFile, FormFieldDef, Program, QCMQuestion, Step, PriseDeContact, PriseDeContactAsset
 from apps.progress.models import (
     AssetCompletion,
     ConsigneAcceptance,
+    PriseDeContactAcceptance,
     QCMAttempt,
     StepProgress,
 )
@@ -40,230 +41,432 @@ PROGRAMS_DATA = [
         'degrees': [
             {
                 'id': 'deg_lim_1',
-                'title': 'Niveau 1: Fondations du Mindset',
-                'description': "Posez les bases d'un etat d'esprit gagnant et productif",
+                'title': '1er Degre: Formations Pratiques Limitless',
+                'description': 'Premier degre du programme Limitless. 6 etapes de formations pratiques couvrant le journal spirituel, l\'angeologie, la numerologie, les rituels kabbalistiques et la purification.',
                 'order_index': 0,
                 'files': [
                     {
                         'id': 'dfile_lim_1_1', 'type': 'pdf',
-                        'title': 'Fiche Recap - Fondations du Mindset',
-                        'description': 'Resume des concepts cles du Niveau 1',
-                        'external_url': 'https://www.w3.org/WAI/WCAG20/glance/WCAG2-at-a-Glance.pdf',
+                        'title': 'La Lumiere sur le Royaume',
+                        'description': 'Pratique de la magie sacree au quotidien - A. Moryason',
+                        'external_url': 'minio://documents/limitless-1er-degre/LIVRES A LIRE (Offerts) LIMITLESS/La Lumière sur le Royaume - Pratique_magie_sacree_au_quotidien_A_Moryason.pdf',
                         'order_index': 0,
                     },
                     {
-                        'id': 'dfile_lim_1_2', 'type': 'audio',
-                        'title': 'Podcast Bonus - Motivation Quotidienne',
-                        'description': 'Un podcast pour rester motive tout au long du niveau',
-                        'external_url': 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
+                        'id': 'dfile_lim_1_2', 'type': 'pdf',
+                        'title': 'FRABATO le magicien',
+                        'description': 'Franz Bardon',
+                        'external_url': 'minio://documents/limitless-1er-degre/LIVRES A LIRE (Offerts) LIMITLESS/Franz Bardon - FRABATO le magicien.pdf',
                         'order_index': 1,
+                    },
+                    {
+                        'id': 'dfile_lim_1_3', 'type': 'pdf',
+                        'title': 'Le chemin de la veritable initiation magique',
+                        'description': 'Franz Bardon',
+                        'external_url': 'minio://documents/limitless-1er-degre/LIVRES A LIRE (Offerts) LIMITLESS/Franz Bardon - Le chemin de la veritable initiation magique.pdf',
+                        'order_index': 2,
+                    },
+                    {
+                        'id': 'dfile_lim_1_4', 'type': 'pdf',
+                        'title': 'Un autre corps pour mon ame',
+                        'description': 'Souvenirs de voyage dans l\'au-dela',
+                        'external_url': "minio://documents/limitless-1er-degre/LIVRES A LIRE (Offerts) LIMITLESS/Un autre corps pour mon âme _ Souvenirs de voyage dans l'au-delà ( PDFDrive ).pdf",
+                        'order_index': 3,
+                    },
+                    {
+                        'id': 'dfile_lim_1_5', 'type': 'pdf',
+                        'title': 'La voie du mage',
+                        'description': 'Bien debuter, entrainements pratiques',
+                        'external_url': 'minio://documents/limitless-1er-degre/LIVRES A LIRE (Offerts) LIMITLESS/La voie du mage. Bien débuter, entrainements p.pdf',
+                        'order_index': 4,
+                    },
+                    {
+                        'id': 'dfile_lim_1_6', 'type': 'pdf',
+                        'title': 'Franchezzo, un voyageur au pays des esprits',
+                        'external_url': 'minio://documents/limitless-1er-degre/LIVRES A LIRE (Offerts) LIMITLESS/Franchezzo un voyageur au pays des esprits.pdf',
+                        'order_index': 5,
                     },
                 ],
                 'steps': [
+                    # ── Etape 1: Le Journal Spirituel ──
                     {
                         'id': 'step_lim_1_1',
-                        'title': 'Introduction au Mindset',
-                        'description': 'Decouvrez les principes fondamentaux du mindset de croissance',
+                        'title': 'Le Journal Spirituel',
+                        'description': 'Formation pratique sur la tenue du journal spirituel. 4 seances audio et documents a imprimer.',
                         'order_index': 0,
                         'assets': [
                             {
-                                'id': 'asset_lim_1_1_consigne', 'type': 'consigne',
-                                'title': "Consignes de l'etape", 'order_index': 0,
-                                'consigne_text': (
-                                    'Bienvenue dans cette premiere etape ! Avant de commencer, '
-                                    'prenez un moment pour vous concentrer. Lisez attentivement '
-                                    'chaque ressource et completez le QCM a la fin. '
-                                    'Objectif : comprendre la difference entre un mindset fixe '
-                                    'et un mindset de croissance.'
-                                ),
+                                'id': 'asset_lim_1_1_a1', 'type': 'audio',
+                                'title': 'Formation Journal Spirituel (1ere seance)',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 1_LE JOURNAL SPIRITUEL/Formation Journal Spirituel (1ère séance).mp3',
+                                'order_index': 0,
                             },
                             {
-                                'id': 'asset_lim_1_1_video', 'type': 'video',
-                                'title': 'Introduction au Mindset de Croissance',
-                                'description': 'Decouvrez comment transformer votre facon de penser',
-                                'external_url': 'https://www.youtube.com/watch?v=M1CHPnZfFmU',
+                                'id': 'asset_lim_1_1_a2', 'type': 'audio',
+                                'title': 'Formation Journal Spirituel (2e seance)',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 1_LE JOURNAL SPIRITUEL/Formation Journal Spirituel (2è séance).mp3',
                                 'order_index': 1,
                             },
                             {
-                                'id': 'asset_lim_1_1_pdf', 'type': 'pdf',
-                                'title': 'Guide du Mindset - PDF',
-                                'description': 'Document de reference sur les principes cles du mindset',
-                                'external_url': 'https://www.w3.org/WAI/WCAG20/glance/WCAG2-at-a-Glance.pdf',
+                                'id': 'asset_lim_1_1_a3', 'type': 'audio',
+                                'title': 'Formation Journal Spirituel (3e seance)',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 1_LE JOURNAL SPIRITUEL/Formation Journal Spirituel (3è séance).mp3',
                                 'order_index': 2,
                             },
                             {
-                                'id': 'asset_lim_1_1_qcm', 'type': 'qcm',
-                                'title': 'QCM - Mindset de base',
-                                'order_index': 3, 'passing_score': 70,
-                                'questions': [
-                                    {
-                                        'question': "Qu'est-ce qu'un mindset de croissance ?",
-                                        'options': [
-                                            'Croire que les capacites sont fixes et immuables',
-                                            'Croire que les capacites peuvent etre developpees par l\'effort',
-                                            'Eviter les defis pour ne pas echouer',
-                                            'Se comparer constamment aux autres',
-                                        ],
-                                        'correct_index': 1,
-                                    },
-                                    {
-                                        'question': "Quelle attitude caracterise un mindset fixe ?",
-                                        'options': [
-                                            'Accueillir les critiques constructives',
-                                            'Voir l\'effort comme un chemin vers la maitrise',
-                                            'Abandonner face aux obstacles difficiles',
-                                            'S\'inspirer du succes des autres',
-                                        ],
-                                        'correct_index': 2,
-                                    },
-                                    {
-                                        'question': "Comment developpe-t-on un mindset de reussite ?",
-                                        'options': [
-                                            'En restant dans sa zone de confort',
-                                            'En evitant les erreurs a tout prix',
-                                            'Par la pratique deliberee et l\'apprentissage continu',
-                                            'En attendant que la motivation vienne',
-                                        ],
-                                        'correct_index': 2,
-                                    },
-                                ],
+                                'id': 'asset_lim_1_1_a4', 'type': 'audio',
+                                'title': 'Formation Journal Spirituel (4e seance)',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 1_LE JOURNAL SPIRITUEL/Formation Journal Spirituel (4e Séance).mp3',
+                                'order_index': 3,
+                            },
+                            {
+                                'id': 'asset_lim_1_1_d1', 'type': 'pdf',
+                                'title': 'CONSIGNES LIMITLESS 1er degre',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 1_LE JOURNAL SPIRITUEL/CONSIGNES LIMITLESS 1er degré.pdf',
+                                'order_index': 4,
+                            },
+                            {
+                                'id': 'asset_lim_1_1_d2', 'type': 'pdf',
+                                'title': 'Protocole Preliminaire maintien spirituel',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 1_LE JOURNAL SPIRITUEL/Protocole Préliminaire maintien spirituel-protected.pdf',
+                                'order_index': 5,
+                            },
+                            {
+                                'id': 'asset_lim_1_1_d3', 'type': 'pdf',
+                                'title': '30 Copies Journal Spirituel avance',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 1_LE JOURNAL SPIRITUEL/30 Copies Journal Spirituel +avancé.pdf',
+                                'order_index': 6,
+                            },
+                            {
+                                'id': 'asset_lim_1_1_d4', 'type': 'pdf',
+                                'title': '2 Copies Bilan Perso Journal',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 1_LE JOURNAL SPIRITUEL/2 Copies Bilan Perso Journal.pdf',
+                                'order_index': 7,
                             },
                         ],
                     },
+                    # ── Etape 2: Angeologie Pratique ──
                     {
                         'id': 'step_lim_1_2',
-                        'title': 'Vaincre les Croyances Limitantes',
-                        'description': 'Identifiez et surmontez vos croyances qui vous freinent',
+                        'title': 'Angeologie Pratique',
+                        'description': 'Decouvrez l\'angeologie pratique: conferences, formations et livres de reference sur les anges gardiens.',
                         'order_index': 1,
                         'assets': [
                             {
-                                'id': 'asset_lim_1_2_consigne', 'type': 'consigne',
-                                'title': "Consignes de l'etape", 'order_index': 0,
-                                'consigne_text': (
-                                    'Dans cette etape, vous allez identifier vos croyances limitantes. '
-                                    'Soyez honnete avec vous-meme et prenez le temps de reflechir. '
-                                    'Ecoutez la meditation guidee dans un endroit calme.'
-                                ),
+                                'id': 'asset_lim_1_2_a1', 'type': 'audio',
+                                'title': 'L\'Angeologie - 1ere Conference',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 2_ANGEOLOGIE PRATIQUE/L_Angéologie -1ère Conférence.mp3',
+                                'order_index': 0,
                             },
                             {
-                                'id': 'asset_lim_1_2_video', 'type': 'video',
-                                'title': 'Comprendre les Croyances Limitantes',
-                                'description': 'Video explicative sur les mecanismes des croyances',
-                                'external_url': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                                'id': 'asset_lim_1_2_a2', 'type': 'audio',
+                                'title': 'Formation Angeologie - 10e Samedis',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 2_ANGEOLOGIE PRATIQUE/Formation Angéologie-10e Samedis 19 Oct 24.mp3',
                                 'order_index': 1,
                             },
                             {
-                                'id': 'asset_lim_1_2_audio', 'type': 'audio',
-                                'title': 'Meditation Guidee - Liberation',
-                                'description': 'Meditation pour se liberer des croyances negatives (15 min)',
-                                'external_url': 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+                                'id': 'asset_lim_1_2_a3', 'type': 'audio',
+                                'title': 'Formation Angeologie - 11e Session',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 2_ANGEOLOGIE PRATIQUE/Formation Angéologie-11e Session 23 Nov 24.mp3',
                                 'order_index': 2,
                             },
                             {
-                                'id': 'asset_lim_1_2_form', 'type': 'form',
-                                'title': 'Auto-evaluation des Croyances',
-                                'description': 'Evaluez vos croyances limitantes personnelles',
+                                'id': 'asset_lim_1_2_a4', 'type': 'audio',
+                                'title': 'Bilan Angeologie',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 2_ANGEOLOGIE PRATIQUE/Bilan Angéologie.mp3',
                                 'order_index': 3,
-                                'form_fields': [
-                                    {'id': 'f_lim12_1', 'label': 'Quelle est votre croyance limitante principale ?', 'type': 'textarea', 'required': True},
-                                    {'id': 'f_lim12_2', 'label': 'Depuis quand avez-vous cette croyance ?', 'type': 'text', 'required': True},
-                                    {'id': 'f_lim12_3', 'label': 'Comment comptez-vous la surmonter ?', 'type': 'textarea', 'required': True},
-                                ],
                             },
                             {
-                                'id': 'asset_lim_1_2_qcm', 'type': 'qcm',
-                                'title': 'QCM - Croyances Limitantes',
-                                'order_index': 4, 'passing_score': 70,
-                                'questions': [
-                                    {
-                                        'question': "Qu'est-ce qu'une croyance limitante ?",
-                                        'options': [
-                                            'Une pensee positive qui nous motive',
-                                            'Une conviction profonde qui freine notre potentiel',
-                                            'Un fait scientifique prouve',
-                                            'Une opinion que les autres ont de nous',
-                                        ],
-                                        'correct_index': 1,
-                                    },
-                                    {
-                                        'question': 'Quelle est la premiere etape pour vaincre une croyance limitante ?',
-                                        'options': [
-                                            'L\'ignorer completement',
-                                            'L\'identifier et la reconnaitre consciemment',
-                                            'Abandonner ses objectifs',
-                                            'Blamer son entourage',
-                                        ],
-                                        'correct_index': 1,
-                                    },
-                                ],
+                                'id': 'asset_lim_1_2_a5', 'type': 'audio',
+                                'title': 'Utilisation Site Evozen Angeologie',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 2_ANGEOLOGIE PRATIQUE/Formation Utilisation Site Evozen Angéologie.mp3',
+                                'order_index': 4,
+                            },
+                            {
+                                'id': 'asset_lim_1_2_v1', 'type': 'video',
+                                'title': 'Decouvrez votre Ange gardien protecteur',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 2_ANGEOLOGIE PRATIQUE/Découvrez votre Ange gardien protecteur.mp4',
+                                'order_index': 5,
+                            },
+                            {
+                                'id': 'asset_lim_1_2_d1', 'type': 'pdf',
+                                'title': 'Calendrier Angelique',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 2_ANGEOLOGIE PRATIQUE/LIVRES ANGEOLOGIE/Calendrier Angélique.pdf',
+                                'order_index': 6,
+                            },
+                            {
+                                'id': 'asset_lim_1_2_d2', 'type': 'pdf',
+                                'title': 'Comment entrer en contact avec son Ange Gardien',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 2_ANGEOLOGIE PRATIQUE/LIVRES ANGEOLOGIE/COMMENT ENTRER EN CONTACT AVEC SON ANGE GARDIEN.pdf',
+                                'order_index': 7,
+                            },
+                            {
+                                'id': 'asset_lim_1_2_d3', 'type': 'pdf',
+                                'title': 'Communiquer avec son Ange Gardien (Haziel)',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 2_ANGEOLOGIE PRATIQUE/LIVRES ANGEOLOGIE/Haziel-Communiquer Avec Son Ange Gardien.pdf',
+                                'order_index': 8,
+                            },
+                            {
+                                'id': 'asset_lim_1_2_d4', 'type': 'pdf',
+                                'title': 'Le Livre des Anges',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 2_ANGEOLOGIE PRATIQUE/LIVRES ANGEOLOGIE/Le Livre des Anges.pdf',
+                                'order_index': 9,
                             },
                         ],
                     },
+                    # ── Etape 3: Chemin de Vie (Numerologie) ──
                     {
                         'id': 'step_lim_1_3',
-                        'title': 'Le Pouvoir des Habitudes',
-                        'description': 'Comprenez comment les habitudes faconnent votre vie et apprenez a en creer de nouvelles',
+                        'title': 'Chemin de Vie (Numerologie)',
+                        'description': 'Decouvrez votre chemin de vie a travers la numerologie. 3 seances de formation et les resumes des 9 chemins.',
                         'order_index': 2,
                         'assets': [
                             {
-                                'id': 'asset_lim_1_3_consigne', 'type': 'consigne',
-                                'title': "Consignes de l'etape", 'order_index': 0,
-                                'consigne_text': (
-                                    'Les habitudes representent 40% de nos actions quotidiennes. '
-                                    'Dans cette etape, vous decouvrirez la boucle des habitudes '
-                                    'et comment installer des routines positives durables.'
-                                ),
+                                'id': 'asset_lim_1_3_a1', 'type': 'audio',
+                                'title': 'Formation Chemin de vie (1ere Seance)',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 3_CHEMIN DE VIE (Numérologie)/Formation Chemin de vie (1ère Séance).mp3',
+                                'order_index': 0,
                             },
                             {
-                                'id': 'asset_lim_1_3_video', 'type': 'video',
-                                'title': 'La Science des Habitudes',
-                                'description': 'Comment fonctionne la boucle Signal-Routine-Recompense',
-                                'external_url': 'https://www.youtube.com/watch?v=M1CHPnZfFmU',
+                                'id': 'asset_lim_1_3_a2', 'type': 'audio',
+                                'title': 'Formation Chemin de vie (2e Seance)',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 3_CHEMIN DE VIE (Numérologie)/Formation Chemin de vie (2è Séance).mp3',
                                 'order_index': 1,
                             },
                             {
-                                'id': 'asset_lim_1_3_pdf', 'type': 'pdf',
-                                'title': 'Fiche Pratique - Tracker d\'Habitudes',
-                                'description': 'Template pour suivre vos nouvelles habitudes au quotidien',
-                                'external_url': 'https://ia601209.us.archive.org/21/items/ERIC_ED460188/ERIC_ED460188.pdf',
+                                'id': 'asset_lim_1_3_a3', 'type': 'audio',
+                                'title': 'Formation Chemin de Vie (3e Seance)',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 3_CHEMIN DE VIE (Numérologie)/Formation Chemin de Vie (3è Séance).mp3',
                                 'order_index': 2,
                             },
                             {
-                                'id': 'asset_lim_1_3_qcm', 'type': 'qcm',
-                                'title': 'QCM - Les Habitudes',
-                                'order_index': 3, 'passing_score': 70,
-                                'questions': [
-                                    {
-                                        'question': 'Quels sont les 3 elements de la boucle des habitudes ?',
-                                        'options': [
-                                            'Motivation, Action, Resultat',
-                                            'Signal, Routine, Recompense',
-                                            'Objectif, Plan, Execution',
-                                            'Desir, Effort, Satisfaction',
-                                        ],
-                                        'correct_index': 1,
-                                    },
-                                    {
-                                        'question': 'Combien de temps faut-il en moyenne pour installer une nouvelle habitude ?',
-                                        'options': [
-                                            '7 jours',
-                                            '21 jours',
-                                            '66 jours en moyenne',
-                                            'Exactement 30 jours',
-                                        ],
-                                        'correct_index': 2,
-                                    },
-                                    {
-                                        'question': 'Quelle strategie est la plus efficace pour changer une habitude ?',
-                                        'options': [
-                                            'Compter uniquement sur la volonte',
-                                            'Remplacer la routine par une alternative positive en gardant le meme signal',
-                                            'Eliminer toutes les habitudes d\'un coup',
-                                            'Attendre d\'etre motive pour commencer',
-                                        ],
-                                        'correct_index': 1,
-                                    },
-                                ],
+                                'id': 'asset_lim_1_3_d1', 'type': 'pdf',
+                                'title': 'Votre Chemin de Vie',
+                                'description': 'Guide complet de numerologie',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 3_CHEMIN DE VIE (Numérologie)/Votre Chemin de Vie.pdf',
+                                'order_index': 3,
+                            },
+                            {
+                                'id': 'asset_lim_1_3_d2', 'type': 'pdf',
+                                'title': 'Resume Chemin 1', 'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 3_CHEMIN DE VIE (Numérologie)/Résumé Chemins de Vie de 1 à 9/EPE Chemin 1.pdf',
+                                'order_index': 4,
+                            },
+                            {
+                                'id': 'asset_lim_1_3_d3', 'type': 'pdf',
+                                'title': 'Resume Chemin 2', 'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 3_CHEMIN DE VIE (Numérologie)/Résumé Chemins de Vie de 1 à 9/EPE Chemin 2.pdf',
+                                'order_index': 5,
+                            },
+                            {
+                                'id': 'asset_lim_1_3_d4', 'type': 'pdf',
+                                'title': 'Resume Chemin 3', 'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 3_CHEMIN DE VIE (Numérologie)/Résumé Chemins de Vie de 1 à 9/EPE Chemin 3.pdf',
+                                'order_index': 6,
+                            },
+                            {
+                                'id': 'asset_lim_1_3_d5', 'type': 'pdf',
+                                'title': 'Resume Chemin 4', 'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 3_CHEMIN DE VIE (Numérologie)/Résumé Chemins de Vie de 1 à 9/EPE Chemin 4.pdf',
+                                'order_index': 7,
+                            },
+                            {
+                                'id': 'asset_lim_1_3_d6', 'type': 'pdf',
+                                'title': 'Resume Chemin 5', 'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 3_CHEMIN DE VIE (Numérologie)/Résumé Chemins de Vie de 1 à 9/EPE Chemin 5.pdf',
+                                'order_index': 8,
+                            },
+                            {
+                                'id': 'asset_lim_1_3_d7', 'type': 'pdf',
+                                'title': 'Resume Chemin 6', 'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 3_CHEMIN DE VIE (Numérologie)/Résumé Chemins de Vie de 1 à 9/EPE Chemin 6.pdf',
+                                'order_index': 9,
+                            },
+                            {
+                                'id': 'asset_lim_1_3_d8', 'type': 'pdf',
+                                'title': 'Resume Chemin 7', 'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 3_CHEMIN DE VIE (Numérologie)/Résumé Chemins de Vie de 1 à 9/EPE Chemin 7.pdf',
+                                'order_index': 10,
+                            },
+                            {
+                                'id': 'asset_lim_1_3_d9', 'type': 'pdf',
+                                'title': 'Resume Chemin 8', 'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 3_CHEMIN DE VIE (Numérologie)/Résumé Chemins de Vie de 1 à 9/EPE Chemin 8.pdf',
+                                'order_index': 11,
+                            },
+                            {
+                                'id': 'asset_lim_1_3_d10', 'type': 'pdf',
+                                'title': 'Resume Chemin 9', 'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 3_CHEMIN DE VIE (Numérologie)/Résumé Chemins de Vie de 1 à 9/EPE Chemin 9.pdf',
+                                'order_index': 12,
+                            },
+                        ],
+                    },
+                    # ── Etape 4: Rituel des 4 elements (Kabbalistique) ──
+                    {
+                        'id': 'step_lim_1_4',
+                        'title': 'Rituel des 4 elements (Kabbalistique)',
+                        'description': 'Apprenez le rituel de la Croix Kabbalistique et des 4 elements. Formations audio, videos de demonstration et protocole.',
+                        'order_index': 3,
+                        'assets': [
+                            {
+                                'id': 'asset_lim_1_4_a1', 'type': 'audio',
+                                'title': 'Formation Rituel 4 elements - Samedis',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 4_RITUEL des 4 éléments (Kabbalistique)/Audio Formation Rituel ds 4 élémt-10e Samedis 02 Nov 24.mp3',
+                                'order_index': 0,
+                            },
+                            {
+                                'id': 'asset_lim_1_4_a2', 'type': 'audio',
+                                'title': 'Formation Rituel 4 elements - Jeudis',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 4_RITUEL des 4 éléments (Kabbalistique)/Audio Formation Rituel 4 éléments - 10e Jeudis 07 Nov 24.mp3',
+                                'order_index': 1,
+                            },
+                            {
+                                'id': 'asset_lim_1_4_a3', 'type': 'audio',
+                                'title': 'Formation Croix Kabbalistique - Questions/Reponses',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 4_RITUEL des 4 éléments (Kabbalistique)/Audio Formation Croix kab 7è Session Ques-Rep.mp3',
+                                'order_index': 2,
+                            },
+                            {
+                                'id': 'asset_lim_1_4_v1', 'type': 'video',
+                                'title': 'Video Rituel de la Croix des Elements',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 4_RITUEL des 4 éléments (Kabbalistique)/Vidéo Rituel de la Croix des Eléments.mp4',
+                                'order_index': 3,
+                            },
+                            {
+                                'id': 'asset_lim_1_4_v2', 'type': 'video',
+                                'title': 'Demonstration Croix Kabbalistique',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 4_RITUEL des 4 éléments (Kabbalistique)/Vidéo démonstrat° Croix Kabbalistique.mp4',
+                                'order_index': 4,
+                            },
+                            {
+                                'id': 'asset_lim_1_4_v3', 'type': 'video',
+                                'title': 'Croix Kabbalistique avec un frere africain',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 4_RITUEL des 4 éléments (Kabbalistique)/Vidéo Croix Kabb avec 1frère africain.mp4',
+                                'order_index': 5,
+                            },
+                            {
+                                'id': 'asset_lim_1_4_d1', 'type': 'pdf',
+                                'title': 'Protocole RITUEL DES 4 ELEMENTS',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 4_RITUEL des 4 éléments (Kabbalistique)/Protocole RITUEL DES 4 ELEMENTS.pdf',
+                                'order_index': 6,
+                            },
+                            {
+                                'id': 'asset_lim_1_4_i1', 'type': 'image',
+                                'title': 'Schema des 4 elements',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 4_RITUEL des 4 éléments (Kabbalistique)/WhatsApp Image 2023-07-27 at 20.40.07.jpeg',
+                                'order_index': 7,
+                            },
+                        ],
+                    },
+                    # ── Etape 5: Rituel du R9 (Reequilibrage Total) ──
+                    {
+                        'id': 'step_lim_1_5',
+                        'title': 'Rituel du R9 (Reequilibrage Total)',
+                        'description': 'Le Rituel des 9 Jours pour le reequilibrage total et la prosperite illimitee. Formations, manuels et protocole complet.',
+                        'order_index': 4,
+                        'assets': [
+                            {
+                                'id': 'asset_lim_1_5_a1', 'type': 'audio',
+                                'title': 'Audio Formation R9',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 5_RITUEL du R9 (Rééquilibrage Total)/Audio Formation R9.mp3',
+                                'order_index': 0,
+                            },
+                            {
+                                'id': 'asset_lim_1_5_a2', 'type': 'audio',
+                                'title': 'Revision du R9',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 5_RITUEL du R9 (Rééquilibrage Total)/Révison du R9.mp3',
+                                'order_index': 1,
+                            },
+                            {
+                                'id': 'asset_lim_1_5_a3', 'type': 'audio',
+                                'title': 'Questions/Reponses sur le R9',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 5_RITUEL du R9 (Rééquilibrage Total)/Quest° Réps sur le R9.mp3',
+                                'order_index': 2,
+                            },
+                            {
+                                'id': 'asset_lim_1_5_d1', 'type': 'pdf',
+                                'title': 'Protocole Complet du R9',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 5_RITUEL du R9 (Rééquilibrage Total)/Protocole Complet du R9 (Rééquilibrage totale).pdf',
+                                'order_index': 3,
+                            },
+                            {
+                                'id': 'asset_lim_1_5_d2', 'type': 'pdf',
+                                'title': 'Manuel de l\'Initie - Rituel des 9 Jours',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 5_RITUEL du R9 (Rééquilibrage Total)/Manuel de l_Initié_Rituel des 9 Jours.pdf',
+                                'order_index': 4,
+                            },
+                            {
+                                'id': 'asset_lim_1_5_d3', 'type': 'pdf',
+                                'title': 'Manuel Rituel Des Neuf Jours',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 5_RITUEL du R9 (Rééquilibrage Total)/Manuel Rituel_Des_Neuf_Jours.pdf',
+                                'order_index': 5,
+                            },
+                            {
+                                'id': 'asset_lim_1_5_d4', 'type': 'pdf',
+                                'title': 'Manuel Officiel Rituel R9 Prosperite Illimitee',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 5_RITUEL du R9 (Rééquilibrage Total)/Manuel Officiel Rituel_R9_Prospérité_Illimitée.pdf',
+                                'order_index': 6,
+                            },
+                            {
+                                'id': 'asset_lim_1_5_i1', 'type': 'image',
+                                'title': 'Rituel du R9 - Schema',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 5_RITUEL du R9 (Rééquilibrage Total)/Rituel du R9.png',
+                                'order_index': 7,
+                            },
+                        ],
+                    },
+                    # ── Etape 6: Bain de Purification ──
+                    {
+                        'id': 'step_lim_1_6',
+                        'title': 'Bain de Purification',
+                        'description': 'Rituel du Bain de Purification PMS. Explications audio, videos des ingredients, protocole complet et psaumes.',
+                        'order_index': 5,
+                        'assets': [
+                            {
+                                'id': 'asset_lim_1_6_a1', 'type': 'audio',
+                                'title': 'Explication Bain Purification PMS',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 6_BAIN DE PURIFICATION/Audio 1_Explication Bain Purification PMS.mp3',
+                                'order_index': 0,
+                            },
+                            {
+                                'id': 'asset_lim_1_6_a2', 'type': 'audio',
+                                'title': 'Explications du Bain de Purification',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 6_BAIN DE PURIFICATION/Audio 2_Explications du Bain de Purification.mp3',
+                                'order_index': 1,
+                            },
+                            {
+                                'id': 'asset_lim_1_6_v1', 'type': 'video',
+                                'title': 'Apercu ingredients (1)',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 6_BAIN DE PURIFICATION/Vidéo aperçu ingrédients (1).mp4',
+                                'order_index': 2,
+                            },
+                            {
+                                'id': 'asset_lim_1_6_v2', 'type': 'video',
+                                'title': 'Apercu ingredients (2)',
+                                'external_url': 'minio://audios/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 6_BAIN DE PURIFICATION/Vidéo aperçu ingrédients (2).mp4',
+                                'order_index': 3,
+                            },
+                            {
+                                'id': 'asset_lim_1_6_d1', 'type': 'pdf',
+                                'title': 'Protocole Complet BAIN DE PURIFICATION',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 6_BAIN DE PURIFICATION/Protocole Complet BAIN DE PURIFICATION.pdf',
+                                'order_index': 4,
+                            },
+                            {
+                                'id': 'asset_lim_1_6_d2', 'type': 'pdf',
+                                'title': 'Psaume 51 (Louis Segond 1910)',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 6_BAIN DE PURIFICATION/Psaume 51 _ Louis Segond 1910.pdf',
+                                'order_index': 5,
+                            },
+                            {
+                                'id': 'asset_lim_1_6_d3', 'type': 'pdf',
+                                'title': 'Psaume 23',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 6_BAIN DE PURIFICATION/Psaume 23.pdf',
+                                'order_index': 6,
+                            },
+                            {
+                                'id': 'asset_lim_1_6_i1', 'type': 'image',
+                                'title': 'Ingredients marmite',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 6_BAIN DE PURIFICATION/Ingrédients marmite.jpg',
+                                'order_index': 7,
+                            },
+                            {
+                                'id': 'asset_lim_1_6_i2', 'type': 'image',
+                                'title': 'Marmite et bougie',
+                                'external_url': 'minio://documents/limitless-1er-degre/ETAPES DES FORMATIONS PRATIQUES LIMITLESS/Etape 6_BAIN DE PURIFICATION/Marmite et bougie.jpg',
+                                'order_index': 8,
                             },
                         ],
                     },
@@ -1991,6 +2194,7 @@ class Command(BaseCommand):
 
         self._create_users()
         self._create_all_programs()
+        self._create_prises_de_contact()
         self._create_enrollments()
         self._create_progress()
         self._create_sessions()
@@ -2148,6 +2352,193 @@ class Command(BaseCommand):
                     defaults_ff['select_options'] = f['select_options']
                 FormFieldDef.objects.update_or_create(id=f['id'], defaults=defaults_ff)
 
+    # ────────────────────── PRISES DE CONTACT ──────────────────────
+
+    def _create_prises_de_contact(self):
+        self.stdout.write('  Creating prises de contact...')
+
+        # Clean up old data
+        PriseDeContactAsset.objects.all().delete()
+        PriseDeContact.objects.all().delete()
+        PriseDeContactAcceptance.objects.all().delete()
+
+        # ── Program-level PDC: Limitless ──
+        pdc_prog_lim = PriseDeContact.objects.create(
+            id='pdc_prog_lim',
+            program=self.programs['prog_limitless'],
+            title='Bienvenue dans Limitless',
+            description='Avant de commencer le programme, veuillez prendre connaissance des informations suivantes.',
+            order_index=0,
+        )
+        PriseDeContactAsset.objects.create(
+            id='pdca_prog_lim_v1', prise_de_contact=pdc_prog_lim,
+            type='video', title='Video d\'introduction au programme',
+            description='Decouvrez le programme Limitless et ses objectifs.',
+            external_url='https://www.youtube.com/watch?v=dQw4w9WgXcQ', order_index=0,
+        )
+        PriseDeContactAsset.objects.create(
+            id='pdca_prog_lim_a1', prise_de_contact=pdc_prog_lim,
+            type='audio', title='Message de bienvenue du coach',
+            description='Ecoutez le message de bienvenue et les consignes generales.',
+            external_url='https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', order_index=1,
+        )
+        PriseDeContactAsset.objects.create(
+            id='pdca_prog_lim_d1', prise_de_contact=pdc_prog_lim,
+            type='pdf', title='Guide de demarrage rapide',
+            description='Lisez ce guide avant de debuter le programme.',
+            external_url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf', order_index=2,
+        )
+
+        # ── Program-level PDC: PMS ──
+        pdc_prog_pms = PriseDeContact.objects.create(
+            id='pdc_prog_pms',
+            program=self.programs['prog_pms'],
+            title='Bienvenue dans PMS',
+            description='Prenez connaissance des informations du programme PMS.',
+            order_index=0,
+        )
+        PriseDeContactAsset.objects.create(
+            id='pdca_prog_pms_v1', prise_de_contact=pdc_prog_pms,
+            type='video', title='Presentation du programme PMS',
+            external_url='https://www.youtube.com/watch?v=M1CHPnZfFmU', order_index=0,
+        )
+        PriseDeContactAsset.objects.create(
+            id='pdca_prog_pms_d1', prise_de_contact=pdc_prog_pms,
+            type='pdf', title='Charte du programme',
+            external_url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf', order_index=1,
+        )
+
+        # ── deg_lim_1: Real "Debuter ICI" PDC ──
+        try:
+            deg_lim_1 = Degree.objects.get(id='deg_lim_1')
+            pdc_deg_lim_1 = PriseDeContact.objects.create(
+                id='pdc_deg_lim_1', degree=deg_lim_1,
+                title='Debuter ICI - Prise de Contact Limitless',
+                description='Bienvenue dans le programme Limitless. Consultez les documents, ecoutez les audios de prise de contact et regardez les videos avant de commencer les etapes.',
+                order_index=0,
+            )
+            # PDC Documents (8 PDFs)
+            pdc_docs = [
+                ('CONSIGNES LIMITLESS 1er degré.pdf', 'CONSIGNES LIMITLESS 1er degre'),
+                ('Program Limitless+ (Sur 3 mois) BW Center.pdf', 'Program Limitless+ (Sur 3 mois)'),
+                ('Protocole NMQAS.pdf', 'Protocole NMQAS'),
+                ('Protocole Préliminaire maintien spirituel-protected.pdf', 'Protocole Preliminaire maintien spirituel'),
+                ('30 Copies Journal Spirituel +avancé.pdf', '30 Copies Journal Spirituel avance'),
+                ('2 Copies Bilan Journal Spirituel.pdf', '2 Copies Bilan Journal Spirituel'),
+                ('Liens des Formations sur Télégram.pdf', 'Liens des Formations sur Telegram'),
+                ('Liste des docs et Livres (1ere Phase).pdf', 'Liste des docs et Livres (1ere Phase)'),
+            ]
+            for idx, (filename, title) in enumerate(pdc_docs):
+                PriseDeContactAsset.objects.create(
+                    id=f'pdca_deg_lim_1_d{idx+1}', prise_de_contact=pdc_deg_lim_1,
+                    type='pdf', title=title,
+                    external_url=f'minio://documents/limitless-1er-degre/Débuter ICI/Docs à Imprimer/{filename}',
+                    order_index=idx,
+                )
+            # PDC Audios (7)
+            pdc_audios = [
+                ('Prise de contact 10ème Session (1ère séance).mp3', 'Prise de contact - 10eme Session'),
+                ('Prise de Contact 11ème Session (Samedis).mp3', 'Prise de Contact - 11eme Session'),
+                ('Consignes supplémentaires.mp3', 'Consignes supplementaires'),
+                ('Formation Protocole NMQAS.mp3', 'Formation Protocole NMQAS'),
+                ('Témoignages (Vol 1).mp3', 'Temoignages (Vol 1)'),
+                ('Témoignages (Vol 2).mp3', 'Temoignages (Vol 2)'),
+                ('Témoignages (Vol 3).mp3', 'Temoignages (Vol 3)'),
+            ]
+            for idx, (filename, title) in enumerate(pdc_audios):
+                PriseDeContactAsset.objects.create(
+                    id=f'pdca_deg_lim_1_a{idx+1}', prise_de_contact=pdc_deg_lim_1,
+                    type='audio', title=title,
+                    external_url=f'minio://audios/limitless-1er-degre/Débuter ICI/Audios Prise de Contact Limitless/{filename}',
+                    order_index=len(pdc_docs) + idx,
+                )
+            # PDC Videos (10 - "Vidéos d'annonces")
+            pdc_videos = [
+                ('Donnez-vous 3 mois.mp4', 'Donnez-vous 3 mois'),
+                ('Explication Religion ou Spiritualité.mp4', 'Explication Religion ou Spiritualite'),
+                ('Importance du Program.mp4', 'Importance du Programme'),
+                ('Les Chemins Spirituels (Whatsap).mp4', 'Les Chemins Spirituels'),
+                ('Prenez 3 mois.mp4', 'Prenez 3 mois'),
+                ('Religion ou Spiritualité.mp4', 'Religion ou Spiritualite'),
+                ('SPOT BOOSTER WEEK CENTER.mp4', 'SPOT BOOSTER WEEK CENTER'),
+                ('Salle des cours en CIV.mp4', 'Salle des cours en CIV'),
+                ('Spot Program Limitless.mp4', 'Spot Program Limitless'),
+                ('Spot Suivi avec Conseiller Williams.mp4', 'Spot Suivi avec Conseiller Williams'),
+            ]
+            for idx, (filename, title) in enumerate(pdc_videos):
+                PriseDeContactAsset.objects.create(
+                    id=f'pdca_deg_lim_1_v{idx+1}', prise_de_contact=pdc_deg_lim_1,
+                    type='video', title=title,
+                    external_url=f'minio://audios/limitless-1er-degre/Débuter ICI/Vidéos d_annonces/{filename}',
+                    order_index=len(pdc_docs) + len(pdc_audios) + idx,
+                )
+        except Degree.DoesNotExist:
+            pass
+
+        # ── Degree-level PDCs ──
+        degree_pdcs = [
+            ('deg_lim_2', 'Prise de contact - Leadership Personnel'),
+            ('deg_lim_3', 'Prise de contact - Excellence & Performance'),
+            ('deg_pms_1', 'Prise de contact - Intelligence Emotionnelle'),
+            ('deg_pms_2', 'Prise de contact - Communication Avancee'),
+        ]
+        for deg_id, title in degree_pdcs:
+            try:
+                deg = Degree.objects.get(id=deg_id)
+                pdc_deg = PriseDeContact.objects.create(
+                    id=f'pdc_{deg_id}', degree=deg,
+                    title=title,
+                    description='Veuillez prendre connaissance de ces informations avant de continuer.',
+                    order_index=0,
+                )
+                PriseDeContactAsset.objects.create(
+                    id=f'pdca_{deg_id}_v1', prise_de_contact=pdc_deg,
+                    type='video', title=f'Introduction - {deg.title}',
+                    external_url='https://www.youtube.com/watch?v=dQw4w9WgXcQ', order_index=0,
+                )
+                PriseDeContactAsset.objects.create(
+                    id=f'pdca_{deg_id}_a1', prise_de_contact=pdc_deg,
+                    type='audio', title=f'Consignes audio - {deg.title}',
+                    external_url='https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3', order_index=1,
+                )
+                PriseDeContactAsset.objects.create(
+                    id=f'pdca_{deg_id}_d1', prise_de_contact=pdc_deg,
+                    type='pdf', title=f'Fiche pratique - {deg.title}',
+                    external_url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf', order_index=2,
+                )
+            except Degree.DoesNotExist:
+                pass
+
+        # ── Step-level PDCs (first step of key degrees) ──
+        step_pdcs = [
+            ('step_lim_1_1', 'Consignes - Introduction au Mindset'),
+            ('step_lim_2_1', 'Consignes - Vision Personnelle'),
+            ('step_pms_1_1', 'Consignes - Intelligence Emotionnelle'),
+        ]
+        for step_id, title in step_pdcs:
+            try:
+                step = Step.objects.get(id=step_id)
+                pdc_step = PriseDeContact.objects.create(
+                    id=f'pdc_{step_id}', step=step,
+                    title=title,
+                    description='Prenez connaissance des consignes avant de debuter cette etape.',
+                    order_index=0,
+                )
+                PriseDeContactAsset.objects.create(
+                    id=f'pdca_{step_id}_d1', prise_de_contact=pdc_step,
+                    type='pdf', title='Fiche de consignes',
+                    external_url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf', order_index=0,
+                )
+            except Step.DoesNotExist:
+                pass
+
+        # ── PDC Acceptance: user1 accepted program-level limitless PDC ──
+        PriseDeContactAcceptance.objects.get_or_create(
+            user=self.user1, prise_de_contact=pdc_prog_lim,
+        )
+
+        self.stdout.write(f'    Created {PriseDeContact.objects.count()} PDCs with {PriseDeContactAsset.objects.count()} assets')
+
     # ────────────────────── ENROLLMENTS ──────────────────────
 
     def _create_enrollments(self):
@@ -2217,6 +2608,9 @@ class Command(BaseCommand):
             ('step_lim_1_1', 'completed'),
             ('step_lim_1_2', 'available'),
             ('step_lim_1_3', 'locked'),
+            ('step_lim_1_4', 'locked'),
+            ('step_lim_1_5', 'locked'),
+            ('step_lim_1_6', 'locked'),
             ('step_lim_2_1', 'locked'),
             ('step_lim_2_2', 'locked'),
             ('step_lim_2_3', 'locked'),
@@ -2357,24 +2751,28 @@ class Command(BaseCommand):
                 'content': 'Grace au Programme Limitless, j\'ai completement transforme '
                            'ma facon de penser. Les exercices pratiques et les QCM m\'ont aide '
                            'a vraiment comprendre chaque concept.',
+                'video_url': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
                 'like_count': 12, 'heart_count': 8, 'comment_count': 2,
             },
             {
                 'id': 'test_2', 'author': self.user3,
                 'content': 'Le Programme PMS m\'a donne les outils necessaires pour devenir '
                            'un meilleur leader. Je recommande vivement !',
+                'video_url': 'https://www.youtube.com/watch?v=M1CHPnZfFmU',
                 'like_count': 8, 'heart_count': 5, 'comment_count': 0,
             },
             {
                 'id': 'test_3', 'author': self.user4,
                 'content': 'Excellent contenu ! Les videos sont claires et les QCM '
                            'permettent de verifier ses connaissances. Merci Booster Week !',
+                'video_url': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
                 'like_count': 15, 'heart_count': 10, 'comment_count': 1,
             },
             {
                 'id': 'test_4', 'author': self.user5,
                 'content': 'J\'ai suivi le programme Finance Personnelle et j\'ai enfin '
                            'compris comment gerer mon budget. Un investissement qui vaut le coup.',
+                'video_url': 'https://www.youtube.com/watch?v=M1CHPnZfFmU',
                 'like_count': 6, 'heart_count': 3, 'comment_count': 0,
             },
             {

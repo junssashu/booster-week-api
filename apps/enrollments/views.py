@@ -15,7 +15,7 @@ from apps.core.exceptions import ConflictError, ForbiddenError, NotFoundError, V
 from apps.core.throttles import PaymentThrottle
 from apps.programs.models import Program
 
-from .models import Enrollment, Payment
+from .models import Enrollment, Payment, PromoCode, PromoCodeRedemption
 from .serializers import (
     EnrollmentCreateSerializer,
     EnrollmentDetailSerializer,
@@ -23,6 +23,8 @@ from .serializers import (
     PaymentInitiateSerializer,
     PaymentSerializer,
     PaymentStatusSerializer,
+    PromoCodeSerializer,
+    PromoCodeValidateSerializer,
 )
 from .services import MoneyFusionError, MoneyFusionService
 
@@ -268,12 +270,56 @@ class EnrollmentListCreateView(APIView):
         if Enrollment.objects.filter(user=request.user, program=program).exists():
             raise ConflictError('User already enrolled in this program.')
 
+        # Handle optional promo code
+        promo_code_str = serializer.validated_data.get('promoCode', '').strip()
+        promo = None
+        discount = 0
+
+        if promo_code_str:
+            try:
+                promo = PromoCode.objects.get(code=promo_code_str.upper())
+            except PromoCode.DoesNotExist:
+                raise ValidationError(
+                    'Code promo invalide.',
+                    [{'field': 'promoCode', 'message': 'Code promo invalide.'}],
+                )
+
+            if not promo.is_valid:
+                raise ValidationError(
+                    'Code promo expire ou deja utilise.',
+                    [{'field': 'promoCode', 'message': 'Code promo expire ou deja utilise.'}],
+                )
+
+            already_used = PromoCodeRedemption.objects.filter(
+                promo_code=promo, user=request.user
+            ).exists()
+            if already_used:
+                raise ValidationError(
+                    'Vous avez deja utilise ce code.',
+                    [{'field': 'promoCode', 'message': 'Vous avez deja utilise ce code.'}],
+                )
+
+            discount = math.floor(program.price * promo.discount_percent / 100)
+
+        total_amount = program.price - discount
+
         enrollment = Enrollment.objects.create(
             user=request.user,
             program=program,
             payment_type=payment_type,
-            total_amount=program.price,
+            total_amount=total_amount,
         )
+
+        # Record promo code redemption if used
+        if promo:
+            PromoCodeRedemption.objects.create(
+                promo_code=promo,
+                user=request.user,
+                enrollment=enrollment,
+                discount_applied=discount,
+            )
+            promo.current_uses += 1
+            promo.save()
 
         data = {
             'id': enrollment.id,
@@ -287,6 +333,10 @@ class EnrollmentListCreateView(APIView):
             'enrollmentDate': enrollment.enrollment_date,
             'payments': [],
         }
+
+        if promo:
+            data['promoCodeApplied'] = promo.code
+            data['discountApplied'] = discount
 
         return Response({'data': data}, status=status.HTTP_201_CREATED)
 
@@ -761,3 +811,72 @@ class DevPaymentSimulateView(APIView):
                 'message': f'Payment simulated as {simulate_status}.',
             }
         })
+
+
+class PromoCodeGenerateView(APIView):
+    """Generate a promo code. Requires user to have at least one completed enrollment."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        # Check eligibility: must have at least one completed enrollment
+        has_completed = Enrollment.objects.filter(
+            user=request.user, payment_status='completed'
+        ).exists()
+        if not has_completed:
+            return Response(
+                {'error': 'You must complete at least one enrollment to generate promo codes.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Create promo code (default 20% discount, 1 use, expires in 30 days)
+        promo = PromoCode.objects.create(
+            creator=request.user,
+            discount_percent=20,
+            max_uses=1,
+            expires_at=timezone.now() + timedelta(days=30),
+        )
+        return Response(PromoCodeSerializer(promo).data, status=status.HTTP_201_CREATED)
+
+
+class PromoCodeValidateView(APIView):
+    """Validate a promo code and return discount info."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = PromoCodeValidateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        code = serializer.validated_data['code'].upper()
+        try:
+            promo = PromoCode.objects.get(code=code)
+        except PromoCode.DoesNotExist:
+            return Response({'valid': False, 'error': 'Code promo invalide.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not promo.is_valid:
+            return Response(
+                {'valid': False, 'error': 'Code promo expire ou deja utilise.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check if user already used this code
+        already_used = PromoCodeRedemption.objects.filter(promo_code=promo, user=request.user).exists()
+        if already_used:
+            return Response(
+                {'valid': False, 'error': 'Vous avez deja utilise ce code.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({
+            'valid': True,
+            'code': promo.code,
+            'discountPercent': promo.discount_percent,
+        })
+
+
+class PromoCodeListView(APIView):
+    """List promo codes created by the current user."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        codes = PromoCode.objects.filter(creator=request.user).order_by('-created_at')
+        return Response(PromoCodeSerializer(codes, many=True).data)

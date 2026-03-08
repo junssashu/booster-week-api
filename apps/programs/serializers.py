@@ -1,6 +1,38 @@
 from rest_framework import serializers
 
-from .models import Asset, Degree, DegreeFile, FormFieldDef, Program, QCMQuestion, Step
+from .models import Asset, Degree, DegreeFile, FormFieldDef, Program, QCMQuestion, Step, PriseDeContact, PriseDeContactAsset
+from apps.core.storage import resolve_url
+
+
+class PriseDeContactAssetSerializer(serializers.ModelSerializer):
+    externalUrl = serializers.SerializerMethodField()
+    orderIndex = serializers.IntegerField(source='order_index')
+
+    class Meta:
+        model = PriseDeContactAsset
+        fields = ['id', 'type', 'title', 'description', 'externalUrl', 'orderIndex']
+
+    def get_externalUrl(self, obj):
+        return resolve_url(obj.external_url)
+
+
+class PriseDeContactSerializer(serializers.ModelSerializer):
+    assets = PriseDeContactAssetSerializer(many=True, read_only=True)
+    accepted = serializers.SerializerMethodField()
+    orderIndex = serializers.IntegerField(source='order_index')
+
+    class Meta:
+        model = PriseDeContact
+        fields = ['id', 'title', 'description', 'assets', 'accepted', 'orderIndex']
+
+    def get_accepted(self, obj):
+        user = self.context.get('user')
+        if not user:
+            return False
+        from apps.progress.models import PriseDeContactAcceptance
+        return PriseDeContactAcceptance.objects.filter(
+            user=user, prise_de_contact=obj
+        ).exists()
 
 
 class ProgramListSerializer(serializers.ModelSerializer):
@@ -38,20 +70,31 @@ class ProgramDetailSerializer(serializers.ModelSerializer):
     presentationVideoUrl = serializers.CharField(source='presentation_video_url', allow_null=True)
     degrees = DegreeListSerializer(many=True, read_only=True)
     createdAt = serializers.DateTimeField(source='created_at')
+    priseDeContact = serializers.SerializerMethodField()
 
     class Meta:
         model = Program
         fields = ['id', 'name', 'description', 'imageUrl', 'price',
-                  'durationWeeks', 'presentationVideoUrl', 'degrees', 'createdAt']
+                  'durationWeeks', 'presentationVideoUrl', 'degrees', 'createdAt',
+                  'priseDeContact']
+
+    def get_priseDeContact(self, obj):
+        pdc = obj.prises_de_contact.first()
+        if not pdc:
+            return None
+        return PriseDeContactSerializer(pdc, context=self.context).data
 
 
 class DegreeFileSerializer(serializers.ModelSerializer):
     orderIndex = serializers.IntegerField(source='order_index')
-    externalUrl = serializers.CharField(source='external_url', allow_null=True)
+    externalUrl = serializers.SerializerMethodField()
 
     class Meta:
         model = DegreeFile
         fields = ['id', 'type', 'title', 'description', 'externalUrl', 'orderIndex']
+
+    def get_externalUrl(self, obj):
+        return resolve_url(obj.external_url)
 
 
 class StepListSerializer(serializers.ModelSerializer):
@@ -59,6 +102,7 @@ class StepListSerializer(serializers.ModelSerializer):
     orderIndex = serializers.IntegerField(source='order_index')
     assetCount = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
+    completionPercentage = serializers.SerializerMethodField()
     hasConsigne = serializers.SerializerMethodField()
     consigneAccepted = serializers.SerializerMethodField()
     videoCount = serializers.SerializerMethodField()
@@ -68,8 +112,8 @@ class StepListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Step
         fields = ['id', 'degreeId', 'title', 'description', 'orderIndex',
-                  'assetCount', 'status', 'hasConsigne', 'consigneAccepted',
-                  'videoCount', 'audioCount', 'documentCount']
+                  'assetCount', 'status', 'completionPercentage', 'hasConsigne',
+                  'consigneAccepted', 'videoCount', 'audioCount', 'documentCount']
 
     def get_assetCount(self, obj):
         return obj.assets.count()
@@ -91,6 +135,14 @@ class StepListSerializer(serializers.ModelSerializer):
         sp = StepProgress.objects.filter(user=user, step=obj).first()
         return sp.status if sp else 'locked'
 
+    def get_completionPercentage(self, obj):
+        user = self.context.get('user')
+        if not user:
+            return 0
+        from apps.progress.models import StepProgress
+        sp = StepProgress.objects.filter(user=user, step=obj).first()
+        return sp.completion_percentage if sp else 0
+
     def get_hasConsigne(self, obj):
         return obj.assets.filter(type='consigne').exists()
 
@@ -106,18 +158,41 @@ class DegreeDetailSerializer(serializers.ModelSerializer):
     programId = serializers.CharField(source='program_id')
     orderIndex = serializers.IntegerField(source='order_index')
     isAccessible = serializers.SerializerMethodField()
+    completionPercentage = serializers.SerializerMethodField()
     presentationVideoUrl = serializers.SerializerMethodField()
     consigne = serializers.SerializerMethodField()
     steps = serializers.SerializerMethodField()
     files = serializers.SerializerMethodField()
+    priseDeContact = serializers.SerializerMethodField()
 
     class Meta:
         model = Degree
         fields = ['id', 'programId', 'title', 'description', 'orderIndex',
-                  'isAccessible', 'presentationVideoUrl', 'consigne', 'steps', 'files']
+                  'isAccessible', 'completionPercentage', 'presentationVideoUrl',
+                  'consigne', 'steps', 'files', 'priseDeContact']
 
     def get_isAccessible(self, obj):
         return self.context.get('is_accessible', True)
+
+    def get_completionPercentage(self, obj):
+        """Average of all step completion_percentages for this degree for the current user.
+        Steps with no progress count as 0%.
+        """
+        user = self.context.get('user')
+        if not user:
+            return 0
+        steps = obj.steps.all()
+        total_steps = steps.count()
+        if total_steps == 0:
+            return 0
+        from apps.progress.models import StepProgress
+        progress_map = dict(
+            StepProgress.objects.filter(
+                user=user, step__in=steps
+            ).values_list('step_id', 'completion_percentage')
+        )
+        total_pct = sum(progress_map.get(step.id, 0) for step in steps)
+        return round(total_pct / total_steps)
 
     def get_presentationVideoUrl(self, obj):
         """Return the external_url of the first video asset found across steps."""
@@ -156,11 +231,17 @@ class DegreeDetailSerializer(serializers.ModelSerializer):
         files = obj.files.all().order_by('order_index')
         return DegreeFileSerializer(files, many=True).data
 
+    def get_priseDeContact(self, obj):
+        pdc = obj.prises_de_contact.first()
+        if not pdc:
+            return None
+        return PriseDeContactSerializer(pdc, context=self.context).data
+
 
 class AssetSummarySerializer(serializers.ModelSerializer):
     """Used when listing assets in step detail."""
     orderIndex = serializers.IntegerField(source='order_index')
-    externalUrl = serializers.CharField(source='external_url', allow_null=True)
+    externalUrl = serializers.SerializerMethodField()
     consigneText = serializers.SerializerMethodField()
     passingScore = serializers.SerializerMethodField()
     questionCount = serializers.SerializerMethodField()
@@ -170,6 +251,9 @@ class AssetSummarySerializer(serializers.ModelSerializer):
         model = Asset
         fields = ['id', 'type', 'title', 'description', 'externalUrl',
                   'orderIndex', 'consigneText', 'passingScore', 'questionCount', 'formFields']
+
+    def get_externalUrl(self, obj):
+        return resolve_url(obj.external_url)
 
     def get_consigneText(self, obj):
         if obj.type == 'consigne':
@@ -208,14 +292,17 @@ class StepDetailSerializer(serializers.ModelSerializer):
     degreeId = serializers.CharField(source='degree_id')
     orderIndex = serializers.IntegerField(source='order_index')
     status = serializers.SerializerMethodField()
+    completionPercentage = serializers.SerializerMethodField()
     hasConsigne = serializers.SerializerMethodField()
     consigneAccepted = serializers.SerializerMethodField()
     assets = serializers.SerializerMethodField()
+    priseDeContact = serializers.SerializerMethodField()
 
     class Meta:
         model = Step
         fields = ['id', 'degreeId', 'title', 'description', 'orderIndex',
-                  'status', 'hasConsigne', 'consigneAccepted', 'assets']
+                  'status', 'completionPercentage', 'hasConsigne',
+                  'consigneAccepted', 'assets', 'priseDeContact']
 
     def get_status(self, obj):
         user = self.context.get('user')
@@ -224,6 +311,14 @@ class StepDetailSerializer(serializers.ModelSerializer):
         from apps.progress.models import StepProgress
         sp = StepProgress.objects.filter(user=user, step=obj).first()
         return sp.status if sp else 'locked'
+
+    def get_completionPercentage(self, obj):
+        user = self.context.get('user')
+        if not user:
+            return 0
+        from apps.progress.models import StepProgress
+        sp = StepProgress.objects.filter(user=user, step=obj).first()
+        return sp.completion_percentage if sp else 0
 
     def get_hasConsigne(self, obj):
         return obj.assets.filter(type='consigne').exists()
@@ -249,6 +344,12 @@ class StepDetailSerializer(serializers.ModelSerializer):
 
         return AssetSummarySerializer(assets, many=True).data
 
+    def get_priseDeContact(self, obj):
+        pdc = obj.prises_de_contact.first()
+        if not pdc:
+            return None
+        return PriseDeContactSerializer(pdc, context=self.context).data
+
 
 class QCMQuestionSerializer(serializers.ModelSerializer):
     """Serializer for QCM questions — excludes correctIndex."""
@@ -271,7 +372,7 @@ class FormFieldSerializer(serializers.ModelSerializer):
 class AssetDetailSerializer(serializers.ModelSerializer):
     """Full asset detail — type-specific fields."""
     orderIndex = serializers.IntegerField(source='order_index')
-    externalUrl = serializers.CharField(source='external_url', allow_null=True)
+    externalUrl = serializers.SerializerMethodField()
     isCompleted = serializers.SerializerMethodField()
     consigneText = serializers.SerializerMethodField()
     isAccepted = serializers.SerializerMethodField()
@@ -285,6 +386,9 @@ class AssetDetailSerializer(serializers.ModelSerializer):
         fields = ['id', 'type', 'title', 'description', 'externalUrl',
                   'orderIndex', 'isCompleted', 'consigneText', 'isAccepted',
                   'passingScore', 'lastScore', 'questions', 'formFields']
+
+    def get_externalUrl(self, obj):
+        return resolve_url(obj.external_url)
 
     def get_isCompleted(self, obj):
         user = self.context.get('user')

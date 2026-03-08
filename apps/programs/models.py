@@ -58,6 +58,7 @@ DEGREE_FILE_TYPES = [
     ('pdf', 'PDF'),
     ('audio', 'Audio'),
     ('video', 'Video'),
+    ('image', 'Image'),
 ]
 
 
@@ -118,6 +119,7 @@ ASSET_TYPES = [
     ('qcm', 'QCM'),
     ('form', 'Form'),
     ('consigne', 'Consigne'),
+    ('image', 'Image'),
 ]
 
 
@@ -181,3 +183,77 @@ class FormFieldDef(models.Model):
         ordering = ['order_index']
         unique_together = [['asset', 'order_index']]
         indexes = [models.Index(fields=['asset'])]
+
+
+class PriseDeContact(models.Model):
+    id = models.CharField(max_length=50, primary_key=True)
+    program = models.ForeignKey(
+        Program, on_delete=models.CASCADE, null=True, blank=True,
+        related_name='prises_de_contact'
+    )
+    degree = models.ForeignKey(
+        Degree, on_delete=models.CASCADE, null=True, blank=True,
+        related_name='prises_de_contact'
+    )
+    step = models.ForeignKey(
+        Step, on_delete=models.CASCADE, null=True, blank=True,
+        related_name='prises_de_contact'
+    )
+    title = models.CharField(max_length=200)
+    description = models.TextField(null=True, blank=True)
+    order_index = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['order_index']
+        db_table = 'programs_prisedecontact'
+
+    def save(self, *args, **kwargs):
+        if not self.id:
+            import uuid
+            self.id = f"pdc_{uuid.uuid4().hex[:8]}"
+        super().save(*args, **kwargs)
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        parents = [self.program, self.degree, self.step]
+        non_null = [p for p in parents if p is not None]
+        if len(non_null) != 1:
+            raise ValidationError('Exactly one of program, degree, or step must be set.')
+
+    def __str__(self):
+        return self.title
+
+
+class PriseDeContactAsset(models.Model):
+    ASSET_TYPES = [
+        ('video', 'Video'),
+        ('audio', 'Audio'),
+        ('pdf', 'PDF'),
+        ('image', 'Image'),
+    ]
+
+    id = models.CharField(max_length=50, primary_key=True)
+    prise_de_contact = models.ForeignKey(
+        PriseDeContact, on_delete=models.CASCADE, related_name='assets'
+    )
+    type = models.CharField(max_length=10, choices=ASSET_TYPES)
+    title = models.CharField(max_length=200)
+    description = models.TextField(null=True, blank=True)
+    external_url = models.TextField()
+    order_index = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['order_index']
+        db_table = 'programs_prisedecontactasset'
+
+    def save(self, *args, **kwargs):
+        if not self.id:
+            import uuid
+            self.id = f"pdca_{uuid.uuid4().hex[:8]}"
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.type}: {self.title}"

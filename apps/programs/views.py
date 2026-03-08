@@ -1,6 +1,8 @@
 import math
 
+from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema, inline_serializer, OpenApiExample, OpenApiParameter
+from rest_framework import generics
 from rest_framework import serializers as drf_serializers
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
@@ -9,11 +11,12 @@ from rest_framework.response import Response
 from apps.core.exceptions import ForbiddenError, NotFoundError, PaymentRequiredError
 from apps.core.pagination import CustomPagination
 
-from .models import Asset, Degree, Program, Step
+from .models import Asset, Degree, Program, Step, PriseDeContact
 from .serializers import (
     AssetDetailSerializer,
     DegreeDetailSerializer,
     DegreeListSerializer,
+    PriseDeContactSerializer,
     ProgramDetailSerializer,
     ProgramListSerializer,
     StepDetailSerializer,
@@ -103,8 +106,11 @@ def _get_enrollment_and_check_access(user, program):
 
 
 def _check_degree_accessible(enrollment, degree):
-    """Check if degree is accessible based on payment rules."""
-    if not enrollment.can_access_degree(degree):
+    """Check if degree is accessible based on payment and completion rules."""
+    accessible, lock_reason = enrollment.can_access_degree_detail(degree)
+    if not accessible:
+        if lock_reason == 'completion':
+            raise ForbiddenError('Complete previous degrees with at least 70% average to unlock this degree.')
         raise ForbiddenError('Complete second payment to unlock this degree.')
 
 
@@ -376,12 +382,14 @@ class DegreeDetailView(APIView):
             raise NotFoundError('Degree does not exist.')
 
         enrollment = _get_enrollment_and_check_access(request.user, degree.program)
-        is_accessible = enrollment.can_access_degree(degree)
+        accessible, lock_reason = enrollment.can_access_degree_detail(degree)
 
-        if not is_accessible:
+        if not accessible:
+            if lock_reason == 'completion':
+                raise ForbiddenError('Complete previous degrees with at least 70% average to unlock this degree.')
             raise ForbiddenError('Complete second payment to unlock this degree.')
 
-        ctx = {'user': request.user, 'is_accessible': is_accessible}
+        ctx = {'user': request.user, 'is_accessible': accessible}
         serializer = DegreeDetailSerializer(degree, context=ctx)
         return Response(serializer.data)
 
@@ -588,3 +596,45 @@ class AssetDetailView(APIView):
         ctx = {'user': request.user}
         serializer = AssetDetailSerializer(asset, context=ctx)
         return Response(serializer.data)
+
+
+class ProgramPriseDeContactView(generics.RetrieveAPIView):
+    serializer_class = PriseDeContactSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        program_id = self.kwargs['program_id']
+        return get_object_or_404(PriseDeContact, program_id=program_id)
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['user'] = self.request.user
+        return ctx
+
+
+class DegreePriseDeContactView(generics.RetrieveAPIView):
+    serializer_class = PriseDeContactSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        degree_id = self.kwargs['degree_id']
+        return get_object_or_404(PriseDeContact, degree_id=degree_id)
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['user'] = self.request.user
+        return ctx
+
+
+class StepPriseDeContactView(generics.RetrieveAPIView):
+    serializer_class = PriseDeContactSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        step_id = self.kwargs['step_id']
+        return get_object_or_404(PriseDeContact, step_id=step_id)
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['user'] = self.request.user
+        return ctx
