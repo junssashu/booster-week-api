@@ -3,7 +3,6 @@ import hmac
 import logging
 import time
 
-import requests
 from django.conf import settings
 
 from apps.core.utils import generate_prefixed_id
@@ -19,21 +18,27 @@ METHOD_MAP = {
 
 
 class MoneyFusionService:
-    """MoneyFusion payment gateway integration.
+    """MoneyFusion payment gateway integration using the official apiMoneyFusion library.
 
     In dev mode (MONEYFUSION_DEV_MODE=True), creates payment with a fake
     transaction ID. Use the /payments/dev-simulate endpoint to trigger
     the webhook callback locally and complete the payment.
 
-    In production mode, calls the real MoneyFusion API.
+    In production mode, calls the real MoneyFusion API via PaymentClient.
     """
+
+    @staticmethod
+    def _get_client():
+        """Get a configured PaymentClient instance."""
+        from apiMoneyFusion import PaymentClient
+        return PaymentClient(api_key_url=settings.MONEYFUSION_BASE_URL)
 
     @staticmethod
     def initiate_payment(payment, phone):
         """Initiate a payment with MoneyFusion.
 
         Args:
-            payment: Payment model instance (must have .id, .amount, .method)
+            payment: Payment model instance (must have .id, .amount, .method, .enrollment)
             phone: Customer phone number (e.g. '+22507XXXXXXXX')
 
         Returns:
@@ -55,83 +60,83 @@ class MoneyFusionService:
                 'expiresAt': None,
             }
 
-        # Production: call MoneyFusion API
-        mf_method = METHOD_MAP.get(payment.method, payment.method)
-        payload = {
-            'amount': payment.amount,
-            'currency': 'XOF',
-            'method': mf_method,
-            'phone': phone,
-            'orderId': str(payment.id),
-            'callbackUrl': settings.MONEYFUSION_WEBHOOK_URL,
-            'description': f'Paiement Booster Week - {payment.id}',
-        }
-
+        # Production: call MoneyFusion API via official library
         try:
-            response = requests.post(
-                f'{settings.MONEYFUSION_BASE_URL}/transactions',
-                json=payload,
-                headers={
-                    'Authorization': f'Bearer {settings.MONEYFUSION_API_KEY}',
-                    'Content-Type': 'application/json',
-                },
-                timeout=30,
+            client = MoneyFusionService._get_client()
+
+            return_url = settings.MONEYFUSION_RETURN_URL
+
+            articles = [{
+                'name': f'Paiement Booster Week - {payment.id}',
+                'price': str(payment.amount),
+                'quantity': 1,
+            }]
+
+            # Get client name from enrollment user
+            user = payment.enrollment.user
+            client_name = f'{user.first_name} {user.last_name}'.strip() or user.phone
+
+            result = client.create_payment(
+                total_price=str(payment.amount),
+                articles=articles,
+                numero_send=phone,
+                nom_client=client_name,
+                user_id=1,
+                order_id=payment.id,
+                return_url=return_url,
             )
-            response.raise_for_status()
-            data = response.json()
+
+            if not result.get('statut'):
+                raise MoneyFusionError(
+                    result.get('message', 'Payment creation failed.')
+                )
+
+            token = result['token']
+            payment_url = result.get('url', '')
 
             logger.info(
-                'MoneyFusion payment initiated: id=%s, txn=%s',
-                payment.id, data.get('transactionId'),
+                'MoneyFusion payment initiated: id=%s, token=%s, url=%s',
+                payment.id, token, payment_url,
             )
 
             return {
                 'success': True,
-                'transactionId': data['transactionId'],
-                'paymentUrl': data.get('paymentUrl'),
-                'expiresAt': data.get('expiresAt'),
+                'transactionId': token,
+                'paymentUrl': payment_url,
+                'expiresAt': None,
             }
 
-        except requests.exceptions.Timeout:
-            logger.error('MoneyFusion timeout for payment %s', payment.id)
-            raise MoneyFusionError('Payment gateway timeout. Please try again.')
-
-        except requests.exceptions.ConnectionError:
-            logger.error('MoneyFusion connection error for payment %s', payment.id)
-            raise MoneyFusionError('Unable to reach payment gateway. Please try again later.')
-
-        except requests.exceptions.HTTPError as e:
-            status_code = e.response.status_code if e.response else 0
-            body = ''
-            try:
-                body = e.response.json() if e.response else {}
-            except Exception:
-                body = e.response.text if e.response else ''
-
-            logger.error(
-                'MoneyFusion HTTP %s for payment %s: %s',
-                status_code, payment.id, body,
-            )
-
-            if status_code == 401:
-                raise MoneyFusionError('Payment gateway authentication failed.')
-            elif status_code == 422:
-                msg = body.get('message', 'Invalid payment data') if isinstance(body, dict) else 'Invalid payment data'
-                raise MoneyFusionError(f'Payment rejected: {msg}')
-            else:
-                raise MoneyFusionError(f'Payment gateway error (HTTP {status_code}).')
+        except MoneyFusionError:
+            raise
 
         except Exception as e:
             logger.exception('Unexpected MoneyFusion error for payment %s', payment.id)
             raise MoneyFusionError(f'Unexpected payment error: {str(e)}')
 
     @staticmethod
-    def verify_webhook_signature(payload, provided_signature):
-        """Verify MoneyFusion webhook HMAC-SHA256 signature.
+    def verify_payment(token):
+        """Verify payment status via MoneyFusion API.
 
-        The signing string is built from alphabetically-ordered fields
-        joined by '|', then HMAC-SHA256 signed with the webhook secret.
+        Args:
+            token: The payment token returned from create_payment.
+
+        Returns:
+            dict with payment data including 'statut' field.
         """
+        if settings.MONEYFUSION_DEV_MODE:
+            return {'statut': True, 'data': {'statut': 'paid'}}
+
+        try:
+            client = MoneyFusionService._get_client()
+            result = client.get_payment(token)
+            return result
+        except Exception as e:
+            logger.exception('MoneyFusion verify error for token %s', token)
+            raise MoneyFusionError(f'Payment verification failed: {str(e)}')
+
+    @staticmethod
+    def verify_webhook_signature(payload, provided_signature):
+        """Verify MoneyFusion webhook HMAC-SHA256 signature."""
         if not provided_signature:
             return False
 
@@ -150,10 +155,7 @@ class MoneyFusionService:
 
     @staticmethod
     def build_dev_webhook_payload(payment):
-        """Build a valid webhook payload for dev simulation.
-
-        Returns a payload dict with valid signature for local testing.
-        """
+        """Build a valid webhook payload for dev simulation."""
         payload = {
             'transactionId': payment.mf_transaction_id or '',
             'orderId': str(payment.id),
@@ -165,7 +167,6 @@ class MoneyFusionService:
             'timestamp': str(int(time.time())),
         }
 
-        # Build valid signature
         fields = ['amount', 'currency', 'method', 'orderId', 'phone',
                   'status', 'timestamp', 'transactionId']
         values = [str(payload.get(f, '')) for f in fields]
