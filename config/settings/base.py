@@ -137,11 +137,12 @@ SIMPLE_JWT = {
     'TOKEN_TYPE_CLAIM': 'token_type',
 }
 
-# MoneyFusion
+# MoneyFusion payment gateway
 MONEYFUSION_API_KEY = os.getenv('MONEYFUSION_API_KEY', '')
 MONEYFUSION_WEBHOOK_SECRET = os.getenv('MONEYFUSION_WEBHOOK_SECRET', '')
-MONEYFUSION_BASE_URL = os.getenv('MONEYFUSION_BASE_URL', 'https://api.moneyfusion.net/v1')
-MONEYFUSION_WEBHOOK_URL = os.getenv('MONEYFUSION_WEBHOOK_URL', 'https://api.boosterweek.com/api/v1/payments/webhook')
+MONEYFUSION_BASE_URL = os.getenv('MONEYFUSION_BASE_URL', 'https://api.moneyfusion.net')
+MONEYFUSION_WEBHOOK_URL = os.getenv('MONEYFUSION_WEBHOOK_URL', 'https://boosterweekcenter.com/api/v1/payments/webhook')
+MONEYFUSION_RETURN_URL = os.getenv('MONEYFUSION_RETURN_URL', 'https://boosterweekcenter.com/paiement/confirmation')
 MONEYFUSION_DEV_MODE = os.getenv('MONEYFUSION_DEV_MODE', 'True').lower() == 'true'
 
 # MinIO / S3-compatible storage
