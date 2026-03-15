@@ -111,6 +111,24 @@ class PaymentStatusSerializer(serializers.ModelSerializer):
         fields = ['paymentId', 'transactionId', 'status', 'amount', 'method', 'date', 'transactionRef']
 
 
+class PaymentHistorySerializer(serializers.Serializer):
+    id = serializers.CharField()
+    amount = serializers.IntegerField()
+    method = serializers.CharField()
+    status = serializers.CharField()
+    date = serializers.DateTimeField(source='created_at')
+    transactionRef = serializers.CharField(source='mf_transaction_id', default='')
+    enrollmentId = serializers.CharField(source='enrollment_id')
+    programName = serializers.SerializerMethodField()
+    programImageUrl = serializers.SerializerMethodField()
+
+    def get_programName(self, obj):
+        return obj.enrollment.program.name if obj.enrollment and obj.enrollment.program else ''
+
+    def get_programImageUrl(self, obj):
+        return obj.enrollment.program.image_url if obj.enrollment and obj.enrollment.program else ''
+
+
 class PromoCodeSerializer(serializers.ModelSerializer):
     discountPercent = serializers.IntegerField(source='discount_percent')
     maxUses = serializers.IntegerField(source='max_uses')

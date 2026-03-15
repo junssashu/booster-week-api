@@ -22,6 +22,7 @@ from .serializers import (
     EnrollmentCreateSerializer,
     EnrollmentDetailSerializer,
     EnrollmentListSerializer,
+    PaymentHistorySerializer,
     PaymentInitiateSerializer,
     PaymentSerializer,
     PaymentStatusSerializer,
@@ -603,6 +604,53 @@ class PaymentStatusView(APIView):
         return Response(serializer.data)
 
 
+class PaymentHistoryView(APIView):
+    """List all payments for the authenticated user across all enrollments."""
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=['Payments'],
+        summary='Get payment history',
+        description='Returns all payments for the authenticated user across all enrollments, ordered by date descending.',
+        parameters=[
+            {
+                'name': 'status',
+                'in': 'query',
+                'required': False,
+                'schema': {'type': 'string'},
+                'description': 'Filter by payment status (completed, pending, failed, expired).',
+            },
+            {
+                'name': 'method',
+                'in': 'query',
+                'required': False,
+                'schema': {'type': 'string'},
+                'description': 'Filter by payment method (orangeMoney, mtnMoney, wave).',
+            },
+        ],
+        responses={
+            200: PaymentHistorySerializer(many=True),
+        },
+    )
+    def get(self, request):
+        payments = Payment.objects.filter(
+            enrollment__user=request.user
+        ).select_related(
+            'enrollment', 'enrollment__program'
+        ).order_by('-created_at')
+
+        # Optional filters
+        status = request.query_params.get('status')
+        if status:
+            payments = payments.filter(status=status)
+        method = request.query_params.get('method')
+        if method:
+            payments = payments.filter(method=method)
+
+        serializer = PaymentHistorySerializer(payments, many=True)
+        return Response({'data': serializer.data})
+
+
 class PaymentVerifyView(APIView):
     """Verify payment status by MoneyFusion token.
 
@@ -656,7 +704,7 @@ class PaymentVerifyView(APIView):
             )
 
         # Find payment by MoneyFusion transaction ID (token)
-        payment = Payment.objects.filter(mf_transaction_id=token).first()
+        payment = Payment.objects.filter(mf_transaction_id=token).select_related('enrollment', 'enrollment__program').first()
         if not payment:
             raise NotFoundError('Payment not found for this token.')
 
@@ -674,12 +722,17 @@ class PaymentVerifyView(APIView):
             except Exception:
                 pass  # Fall through and return current DB status
 
+        enrollment = payment.enrollment
+        program = enrollment.program if enrollment else None
         return Response({
             'data': {
                 'status': payment.status,
                 'paymentId': payment.id,
                 'amount': payment.amount,
                 'enrollmentId': payment.enrollment_id,
+                'programId': program.id if program else '',
+                'programName': program.name if program else '',
+                'enrollmentPaymentStatus': enrollment.payment_status if enrollment else '',
             }
         })
 
