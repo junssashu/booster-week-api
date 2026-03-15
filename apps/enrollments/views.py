@@ -1,6 +1,8 @@
+import logging
 import math
 from datetime import timedelta
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import status
@@ -27,6 +29,75 @@ from .serializers import (
     PromoCodeValidateSerializer,
 )
 from .services import MoneyFusionError, MoneyFusionService
+
+logger = logging.getLogger(__name__)
+
+
+def _complete_payment(payment_id):
+    """Atomically complete a payment and update its enrollment.
+
+    Uses select_for_update() to prevent race conditions between
+    webhook and verify endpoints processing the same payment.
+
+    Returns the updated payment, or None if already completed (idempotent).
+    """
+    with transaction.atomic():
+        payment = Payment.objects.select_for_update().get(id=payment_id)
+
+        # Idempotency: already completed
+        if payment.status == 'completed':
+            return None
+
+        payment.status = 'completed'
+        payment.save()
+
+        enrollment = Enrollment.objects.select_for_update().get(id=payment.enrollment_id)
+        enrollment.amount_paid += payment.amount
+        if enrollment.amount_paid >= enrollment.total_amount:
+            enrollment.payment_status = 'completed'
+        elif enrollment.amount_paid > 0:
+            enrollment.payment_status = 'partial'
+        enrollment.save()
+
+        # Initialize progress on first payment
+        _initialize_progress(enrollment)
+
+        return payment
+
+
+def _initialize_progress(enrollment):
+    """Initialize step_progress for the program on first payment."""
+    from apps.progress.models import StepProgress
+
+    # Only initialize if no progress exists yet
+    existing = StepProgress.objects.filter(
+        user=enrollment.user,
+        program=enrollment.program,
+    ).exists()
+    if existing:
+        return
+
+    degrees = enrollment.program.degrees.all().order_by('order_index')
+    first_step_set = False
+
+    for degree in degrees:
+        if not enrollment.can_access_degree(degree):
+            continue
+        steps = degree.steps.all().order_by('order_index')
+        for step_obj in steps:
+            step_status = 'locked'
+            if not first_step_set:
+                step_status = 'available'
+                first_step_set = True
+
+            StepProgress.objects.get_or_create(
+                user=enrollment.user,
+                step=step_obj,
+                defaults={
+                    'program': enrollment.program,
+                    'status': step_status,
+                }
+            )
 
 
 # -- Reusable inline response schemas ----------------------------------------
@@ -141,20 +212,6 @@ _DevSimulateRequestSchema = inline_serializer(
     },
 )
 
-_WebhookRequestSchema = inline_serializer(
-    name='WebhookRequest',
-    fields={
-        'transactionId': drf_serializers.CharField(),
-        'orderId': drf_serializers.CharField(),
-        'status': drf_serializers.ChoiceField(choices=['completed', 'failed']),
-        'signature': drf_serializers.CharField(),
-        'amount': drf_serializers.IntegerField(required=False),
-        'currency': drf_serializers.CharField(required=False),
-        'method': drf_serializers.CharField(required=False),
-        'phone': drf_serializers.CharField(required=False),
-        'timestamp': drf_serializers.CharField(required=False),
-    },
-)
 
 _GatewayErrorSchema = inline_serializer(
     name='GatewayErrorResponse',
@@ -465,11 +522,16 @@ class PaymentInitiateView(APIView):
                 [{'field': 'amount', 'message': f'Expected {expected}, got {amount}'}]
             )
 
-        # Check for pending payments
-        pending = Payment.objects.filter(
-            enrollment=enrollment, status='pending'
-        ).exists()
-        if pending:
+        # Auto-expire stale pending payments
+        cutoff = timezone.now() - timedelta(minutes=settings.PAYMENT_EXPIRY_MINUTES)
+        Payment.objects.filter(
+            enrollment=enrollment,
+            status='pending',
+            created_at__lt=cutoff,
+        ).update(status='expired')
+
+        # Check for non-stale pending payments
+        if Payment.objects.filter(enrollment=enrollment, status='pending').exists():
             raise ConflictError('A payment is already pending for this enrollment.')
 
         payment = Payment.objects.create(
@@ -494,7 +556,7 @@ class PaymentInitiateView(APIView):
         payment.mf_transaction_id = mf_result['transactionId']
         payment.save()
 
-        expires_at = timezone.now() + timedelta(minutes=30)
+        expires_at = timezone.now() + timedelta(minutes=settings.PAYMENT_EXPIRY_MINUTES)
 
         response_data = {
             'paymentId': payment.id,
@@ -541,117 +603,163 @@ class PaymentStatusView(APIView):
         return Response(serializer.data)
 
 
+class PaymentVerifyView(APIView):
+    """Verify payment status by MoneyFusion token.
+
+    Called by the frontend confirmation page after MoneyFusion redirects
+    the user back with ?token=<mf_token>.
+    """
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        tags=['Payments'],
+        summary='Verify payment by token',
+        description=(
+            'Look up a payment by its MoneyFusion token and return its current '
+            'status. This is called by the payment confirmation page after '
+            'MoneyFusion redirects the user back. No authentication required '
+            'since the token acts as a capability.'
+        ),
+        parameters=[
+            {
+                'name': 'token',
+                'in': 'query',
+                'required': True,
+                'schema': {'type': 'string'},
+                'description': 'MoneyFusion payment token.',
+            },
+        ],
+        responses={
+            200: inline_serializer(
+                name='PaymentVerifyResponse',
+                fields={
+                    'data': inline_serializer(
+                        name='PaymentVerifyData',
+                        fields={
+                            'status': drf_serializers.CharField(),
+                            'paymentId': drf_serializers.CharField(),
+                            'amount': drf_serializers.IntegerField(),
+                            'enrollmentId': drf_serializers.CharField(),
+                        },
+                    ),
+                },
+            ),
+            404: _ErrorResponseSchema,
+        },
+    )
+    def get(self, request):
+        token = request.query_params.get('token')
+        if not token:
+            raise ValidationError(
+                'Token is required.',
+                [{'field': 'token', 'message': 'Token query parameter is required.'}],
+            )
+
+        # Find payment by MoneyFusion transaction ID (token)
+        payment = Payment.objects.filter(mf_transaction_id=token).first()
+        if not payment:
+            raise NotFoundError('Payment not found for this token.')
+
+        # If still pending, verify with MoneyFusion API
+        if payment.status == 'pending':
+            try:
+                mf_result = MoneyFusionService.verify_payment(token)
+                mf_status = mf_result.get('data', {}).get('statut', '')
+                if mf_status == 'paid':
+                    _complete_payment(payment.id)
+                    payment.refresh_from_db()
+                elif mf_status in ('failed', 'failure', 'no paid'):
+                    payment.status = 'failed'
+                    payment.save()
+            except Exception:
+                pass  # Fall through and return current DB status
+
+        return Response({
+            'data': {
+                'status': payment.status,
+                'paymentId': payment.id,
+                'amount': payment.amount,
+                'enrollmentId': payment.enrollment_id,
+            }
+        })
+
+
 class PaymentWebhookView(APIView):
+    """Receives payment status updates from MoneyFusion.
+
+    MoneyFusion POSTs a payload with nested data including tokenPay and statut.
+    We verify authenticity by calling get_payment(token) via the API.
+    """
     permission_classes = [AllowAny]
 
     @extend_schema(
         tags=['Payments'],
         summary='MoneyFusion webhook callback',
         description=(
-            'Receives asynchronous payment status updates from the MoneyFusion '
-            'gateway. **No authentication** is required; instead the payload is '
-            'verified using an HMAC-SHA256 signature computed over a canonical '
-            'set of fields with the shared webhook secret. '
-            'On a **completed** status the payment is marked as completed, the '
-            'enrollment\'s amountPaid is updated, and if fully paid the '
-            'enrollment status moves to "completed". Step progress records are '
-            'initialized for the user on the first successful payment. '
-            'The handler is idempotent: re-processing an already-completed '
-            'payment returns success without side effects.'
+            'Receives asynchronous payment status updates from MoneyFusion. '
+            'The payload contains a nested data object with tokenPay and statut fields. '
+            'Authenticity is verified by calling get_payment() on the MoneyFusion API. '
+            'On a "paid" status, the payment is completed atomically and the '
+            'enrollment is updated. The handler is idempotent.'
         ),
-        request=_WebhookRequestSchema,
+        request=inline_serializer(
+            name='MFWebhookRequest',
+            fields={
+                'statut': drf_serializers.BooleanField(),
+                'data': inline_serializer(
+                    name='MFWebhookData',
+                    fields={
+                        'tokenPay': drf_serializers.CharField(),
+                        'statut': drf_serializers.CharField(),
+                        'Montant': drf_serializers.CharField(required=False),
+                        'moyen': drf_serializers.CharField(required=False),
+                    },
+                ),
+            },
+        ),
         responses={
             200: _WebhookReceivedSchema,
-            401: _ErrorResponseSchema,
             404: _ErrorResponseSchema,
         },
     )
-    @transaction.atomic
     def post(self, request):
         data = request.data
-        signature = data.get('signature', '')
+        mf_data = data.get('data', {})
+        token = mf_data.get('tokenPay', '')
+        mf_status = mf_data.get('statut', '')
 
-        # Verify signature
-        if not MoneyFusionService.verify_webhook_signature(data, signature):
-            return Response(
-                {'error': {'code': 'UNAUTHORIZED', 'message': 'Invalid signature.'}},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
-
-        transaction_id = data.get('transactionId')
-        order_id = data.get('orderId')
-        webhook_status = data.get('status')
-
-        # Find payment
-        payment = Payment.objects.filter(mf_transaction_id=transaction_id).first()
-        if not payment:
-            payment = Payment.objects.filter(id=order_id).first()
-        if not payment:
-            return Response(
-                {'error': {'code': 'NOT_FOUND', 'message': 'Payment not found.'}},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        # Idempotency check
-        if payment.status == 'completed':
+        if not token:
+            logger.warning('Webhook received with no tokenPay')
             return Response({'received': True})
 
-        if webhook_status == 'completed':
-            payment.status = 'completed'
-            payment.transaction_ref = transaction_id
-            payment.save()
+        # Find payment by MoneyFusion token
+        payment = Payment.objects.filter(mf_transaction_id=token).first()
+        if not payment:
+            logger.warning('Webhook received for unknown token: %s', token)
+            return Response(
+                {'error': {'code': 'NOT_FOUND', 'message': 'Payment not found.'}},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
-            enrollment = payment.enrollment
-            enrollment.amount_paid += payment.amount
-            if enrollment.amount_paid >= enrollment.total_amount:
-                enrollment.payment_status = 'completed'
-            elif enrollment.amount_paid > 0:
-                enrollment.payment_status = 'partial'
-            enrollment.save()
+        # Idempotency: already processed
+        if payment.status in ('completed', 'failed'):
+            return Response({'received': True})
 
-            # Initialize progress
-            self._initialize_progress(enrollment)
+        # Verify with MoneyFusion API
+        try:
+            verify_result = MoneyFusionService.verify_payment(token)
+            verified_status = verify_result.get('data', {}).get('statut', '')
+        except Exception:
+            logger.exception('Failed to verify webhook for token %s', token)
+            verified_status = mf_status  # Fall back to webhook data
 
-        elif webhook_status == 'failed':
+        if verified_status == 'paid':
+            _complete_payment(payment.id)
+        elif verified_status in ('failed', 'failure', 'no paid'):
             payment.status = 'failed'
             payment.save()
 
         return Response({'received': True})
-
-    def _initialize_progress(self, enrollment):
-        """Initialize step_progress for the program on first payment."""
-        from apps.progress.models import StepProgress
-        from apps.programs.models import Step
-
-        # Only initialize if no progress exists yet
-        existing = StepProgress.objects.filter(
-            user=enrollment.user,
-            program=enrollment.program,
-        ).exists()
-        if existing:
-            return
-
-        degrees = enrollment.program.degrees.all().order_by('order_index')
-        first_step_set = False
-
-        for degree in degrees:
-            if not enrollment.can_access_degree(degree):
-                continue
-            steps = degree.steps.all().order_by('order_index')
-            for step in steps:
-                step_status = 'locked'
-                if not first_step_set:
-                    step_status = 'available'
-                    first_step_set = True
-
-                StepProgress.objects.get_or_create(
-                    user=enrollment.user,
-                    step=step,
-                    defaults={
-                        'program': enrollment.program,
-                        'status': step_status,
-                    }
-                )
 
 
 class EnrollmentPaymentsView(APIView):
@@ -758,7 +866,7 @@ class DevPaymentSimulateView(APIView):
         if payment.status != 'pending':
             raise ConflictError(f'Payment is already {payment.status}.')
 
-        # Simulate the desired outcome (default: completed)
+        # Map user-facing status to MoneyFusion status
         simulate_status = request.data.get('status', 'completed')
         if simulate_status not in ('completed', 'failed'):
             raise ValidationError(
@@ -766,25 +874,10 @@ class DevPaymentSimulateView(APIView):
                 [{'field': 'status', 'message': 'Must be "completed" or "failed"'}],
             )
 
-        # Build webhook payload with valid signature
-        payload = MoneyFusionService.build_dev_webhook_payload(payment)
-        payload['status'] = simulate_status
+        mf_status = 'paid' if simulate_status == 'completed' else 'failure'
 
-        # Re-sign with the actual status
-        import hashlib as _hashlib
-        import hmac as _hmac
-        import time as _time
-
-        payload['timestamp'] = str(int(_time.time()))
-        fields = ['amount', 'currency', 'method', 'orderId', 'phone',
-                  'status', 'timestamp', 'transactionId']
-        values = [str(payload.get(f, '')) for f in fields]
-        signing_string = '|'.join(values)
-        payload['signature'] = _hmac.new(
-            django_settings.MONEYFUSION_WEBHOOK_SECRET.encode(),
-            signing_string.encode(),
-            _hashlib.sha256,
-        ).hexdigest()
+        # Build MoneyFusion-format webhook payload and process
+        payload = MoneyFusionService.build_dev_webhook_payload(payment, mf_status)
 
         # Process through the webhook handler
         webhook_view = PaymentWebhookView()
@@ -797,7 +890,7 @@ class DevPaymentSimulateView(APIView):
         )
         webhook_view.post(webhook_request)
 
-        # Reload payment to get updated status
+        # Reload to get updated status
         payment.refresh_from_db()
         enrollment = payment.enrollment
         enrollment.refresh_from_db()
