@@ -6,7 +6,9 @@ from apps.programs.models import (
     DegreeFile, PriseDeContact, PriseDeContactAsset,
 )
 from .serializers import (
-    AdminProgramSerializer, AdminDegreeSerializer, AdminStepSerializer,
+    AdminProgramSerializer, AdminProgramDetailSerializer,
+    AdminDegreeSerializer, AdminDegreeDetailSerializer,
+    AdminStepSerializer, AdminStepDetailSerializer,
     AdminAssetSerializer, AdminQCMQuestionSerializer, AdminFormFieldSerializer,
     AdminDegreeFileSerializer, AdminPriseDeContactSerializer, AdminPdcAssetSerializer,
 )
@@ -17,10 +19,20 @@ class AdminProgramViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdmin]
     queryset = Program.objects.all().order_by('-created_at')
 
+    def get_serializer_class(self):
+        if self.action == 'retrieve':
+            return AdminProgramDetailSerializer
+        return AdminProgramSerializer
+
 
 class AdminDegreeViewSet(viewsets.ModelViewSet):
     serializer_class = AdminDegreeSerializer
     permission_classes = [IsAdmin]
+
+    def get_serializer_class(self):
+        if self.action == 'retrieve':
+            return AdminDegreeDetailSerializer
+        return AdminDegreeSerializer
 
     def get_queryset(self):
         qs = Degree.objects.all().order_by('order_index')
@@ -33,6 +45,11 @@ class AdminDegreeViewSet(viewsets.ModelViewSet):
 class AdminStepViewSet(viewsets.ModelViewSet):
     serializer_class = AdminStepSerializer
     permission_classes = [IsAdmin]
+
+    def get_serializer_class(self):
+        if self.action == 'retrieve':
+            return AdminStepDetailSerializer
+        return AdminStepSerializer
 
     def get_queryset(self):
         qs = Step.objects.all().order_by('order_index')
@@ -93,7 +110,19 @@ class AdminDegreeFileViewSet(viewsets.ModelViewSet):
 class AdminPriseDeContactViewSet(viewsets.ModelViewSet):
     serializer_class = AdminPriseDeContactSerializer
     permission_classes = [IsAdmin]
-    queryset = PriseDeContact.objects.all().order_by('order_index')
+
+    def get_queryset(self):
+        qs = PriseDeContact.objects.all().order_by('order_index')
+        program_id = self.request.query_params.get('programId')
+        degree_id = self.request.query_params.get('degreeId')
+        step_id = self.request.query_params.get('stepId')
+        if program_id:
+            qs = qs.filter(program_id=program_id)
+        if degree_id:
+            qs = qs.filter(degree_id=degree_id)
+        if step_id:
+            qs = qs.filter(step_id=step_id)
+        return qs
 
 
 class AdminPdcAssetViewSet(viewsets.ModelViewSet):

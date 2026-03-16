@@ -1,11 +1,7 @@
-import hashlib
-import hmac
 import logging
 import time
 
 from django.conf import settings
-
-from apps.core.utils import generate_prefixed_id
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +80,7 @@ class MoneyFusionService:
                 user_id=1,
                 order_id=payment.id,
                 return_url=return_url,
+                webhook_url=settings.MONEYFUSION_WEBHOOK_URL,
             )
 
             if not result.get('statut'):
@@ -122,6 +119,16 @@ class MoneyFusionService:
 
         Returns:
             dict with payment data including 'statut' field.
+            In production, response looks like:
+            {
+                "statut": true,
+                "data": {
+                    "statut": "paid",  # "paid", "failed", "no paid", "pending"
+                    "tokenPay": "...",
+                    "Montant": "...",
+                    ...
+                }
+            }
         """
         if settings.MONEYFUSION_DEV_MODE:
             return {'statut': True, 'data': {'statut': 'paid'}}
@@ -135,51 +142,32 @@ class MoneyFusionService:
             raise MoneyFusionError(f'Payment verification failed: {str(e)}')
 
     @staticmethod
-    def verify_webhook_signature(payload, provided_signature):
-        """Verify MoneyFusion webhook HMAC-SHA256 signature."""
-        if not provided_signature:
-            return False
+    def build_dev_webhook_payload(payment, simulate_status='paid'):
+        """Build a MoneyFusion-format webhook payload for dev simulation.
 
-        fields = ['amount', 'currency', 'method', 'orderId', 'phone',
-                  'status', 'timestamp', 'transactionId']
-        values = [str(payload.get(f, '')) for f in fields]
-        signing_string = '|'.join(values)
+        Args:
+            payment: Payment model instance
+            simulate_status: 'paid' or 'failed' (MoneyFusion status values)
 
-        expected = hmac.new(
-            settings.MONEYFUSION_WEBHOOK_SECRET.encode(),
-            signing_string.encode(),
-            hashlib.sha256,
-        ).hexdigest()
-
-        return hmac.compare_digest(expected, provided_signature)
-
-    @staticmethod
-    def build_dev_webhook_payload(payment):
-        """Build a valid webhook payload for dev simulation."""
-        payload = {
-            'transactionId': payment.mf_transaction_id or '',
-            'orderId': str(payment.id),
-            'status': 'completed',
-            'amount': str(payment.amount),
-            'currency': 'XOF',
-            'method': METHOD_MAP.get(payment.method, payment.method),
-            'phone': '',
-            'timestamp': str(int(time.time())),
+        Returns:
+            dict matching MoneyFusion's real webhook format
+        """
+        return {
+            'statut': True,
+            'data': {
+                'tokenPay': payment.mf_transaction_id or '',
+                'numeroSend': '',
+                'nomclient': 'Dev User',
+                'personal_Info': [],
+                'numeroTransaction': f'dev_txn_{int(time.time())}',
+                'Montant': str(payment.amount),
+                'frais': '0',
+                'statut': simulate_status,
+                'moyen': METHOD_MAP.get(payment.method, payment.method),
+                'return_url': settings.MONEYFUSION_RETURN_URL,
+                'createdAt': '',
+            },
         }
-
-        fields = ['amount', 'currency', 'method', 'orderId', 'phone',
-                  'status', 'timestamp', 'transactionId']
-        values = [str(payload.get(f, '')) for f in fields]
-        signing_string = '|'.join(values)
-
-        signature = hmac.new(
-            settings.MONEYFUSION_WEBHOOK_SECRET.encode(),
-            signing_string.encode(),
-            hashlib.sha256,
-        ).hexdigest()
-
-        payload['signature'] = signature
-        return payload
 
 
 class MoneyFusionError(Exception):

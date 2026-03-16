@@ -4,6 +4,7 @@ from apps.programs.models import (
     Program, Degree, Step, Asset, QCMQuestion, FormFieldDef,
     DegreeFile, PriseDeContact, PriseDeContactAsset,
 )
+from apps.core.storage import resolve_url
 
 
 # ---------------------------------------------------------------------------
@@ -23,7 +24,7 @@ def _map_camel_to_snake(data, field_map):
 # ---------------------------------------------------------------------------
 
 class AdminProgramSerializer(serializers.ModelSerializer):
-    imageUrl = serializers.CharField(source='image_url')
+    imageUrl = serializers.CharField(source='image_url', allow_blank=True, default='')
     durationWeeks = serializers.IntegerField(source='duration_weeks')
     presentationVideoUrl = serializers.CharField(
         source='presentation_video_url', allow_null=True, required=False,
@@ -54,6 +55,17 @@ class AdminProgramSerializer(serializers.ModelSerializer):
                 'isActive': 'isActive',
             })
         )
+
+
+class AdminProgramDetailSerializer(AdminProgramSerializer):
+    degrees = serializers.SerializerMethodField(read_only=True)
+
+    class Meta(AdminProgramSerializer.Meta):
+        fields = AdminProgramSerializer.Meta.fields + ['degrees']
+
+    def get_degrees(self, obj):
+        degrees = obj.degrees.all().order_by('order_index')
+        return AdminDegreeSerializer(degrees, many=True).data
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +130,33 @@ class AdminStepSerializer(serializers.ModelSerializer):
         )
 
 
+class AdminStepDetailSerializer(AdminStepSerializer):
+    assets = serializers.SerializerMethodField(read_only=True)
+
+    class Meta(AdminStepSerializer.Meta):
+        fields = AdminStepSerializer.Meta.fields + ['assets']
+
+    def get_assets(self, obj):
+        assets = obj.assets.all().order_by('order_index')
+        return AdminAssetSerializer(assets, many=True).data
+
+
+class AdminDegreeDetailSerializer(AdminDegreeSerializer):
+    steps = serializers.SerializerMethodField(read_only=True)
+    files = serializers.SerializerMethodField(read_only=True)
+
+    class Meta(AdminDegreeSerializer.Meta):
+        fields = AdminDegreeSerializer.Meta.fields + ['steps', 'files']
+
+    def get_steps(self, obj):
+        steps = obj.steps.all().order_by('order_index')
+        return AdminStepSerializer(steps, many=True).data
+
+    def get_files(self, obj):
+        files = obj.files.all().order_by('order_index')
+        return AdminDegreeFileSerializer(files, many=True).data
+
+
 # ---------------------------------------------------------------------------
 # QCM Question
 # ---------------------------------------------------------------------------
@@ -176,6 +215,7 @@ class AdminAssetSerializer(serializers.ModelSerializer):
     externalUrl = serializers.CharField(
         source='external_url', allow_null=True, required=False,
     )
+    resolvedUrl = serializers.SerializerMethodField(read_only=True)
     orderIndex = serializers.IntegerField(source='order_index')
     passingScore = serializers.IntegerField(
         source='passing_score', default=70, required=False,
@@ -194,10 +234,13 @@ class AdminAssetSerializer(serializers.ModelSerializer):
         model = Asset
         fields = [
             'id', 'stepId', 'type', 'title', 'description', 'externalUrl',
-            'orderIndex', 'passingScore', 'consigneText',
+            'resolvedUrl', 'orderIndex', 'passingScore', 'consigneText',
             'questions', 'formFields', 'createdAt', 'updatedAt',
         ]
         read_only_fields = ['id', 'createdAt', 'updatedAt']
+
+    def get_resolvedUrl(self, obj):
+        return resolve_url(obj.external_url) if obj.external_url else None
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
@@ -231,6 +274,7 @@ class AdminDegreeFileSerializer(serializers.ModelSerializer):
     externalUrl = serializers.CharField(
         source='external_url', allow_null=True, required=False,
     )
+    resolvedUrl = serializers.SerializerMethodField(read_only=True)
     orderIndex = serializers.IntegerField(source='order_index')
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
@@ -239,9 +283,12 @@ class AdminDegreeFileSerializer(serializers.ModelSerializer):
         model = DegreeFile
         fields = [
             'id', 'degreeId', 'type', 'title', 'description', 'externalUrl',
-            'orderIndex', 'createdAt', 'updatedAt',
+            'resolvedUrl', 'orderIndex', 'createdAt', 'updatedAt',
         ]
         read_only_fields = ['id', 'createdAt', 'updatedAt']
+
+    def get_resolvedUrl(self, obj):
+        return resolve_url(obj.external_url) if obj.external_url else None
 
     def to_internal_value(self, data):
         return super().to_internal_value(
@@ -260,6 +307,7 @@ class AdminDegreeFileSerializer(serializers.ModelSerializer):
 class AdminPdcAssetSerializer(serializers.ModelSerializer):
     priseDeContactId = serializers.CharField(source='prise_de_contact_id')
     externalUrl = serializers.CharField(source='external_url')
+    resolvedUrl = serializers.SerializerMethodField(read_only=True)
     orderIndex = serializers.IntegerField(source='order_index')
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
 
@@ -267,9 +315,12 @@ class AdminPdcAssetSerializer(serializers.ModelSerializer):
         model = PriseDeContactAsset
         fields = [
             'id', 'priseDeContactId', 'type', 'title', 'description',
-            'externalUrl', 'orderIndex', 'createdAt',
+            'externalUrl', 'resolvedUrl', 'orderIndex', 'createdAt',
         ]
         read_only_fields = ['id', 'createdAt']
+
+    def get_resolvedUrl(self, obj):
+        return resolve_url(obj.external_url) if obj.external_url else None
 
     def to_internal_value(self, data):
         return super().to_internal_value(
