@@ -14,6 +14,22 @@ class Program(models.Model):
     duration_weeks = models.IntegerField()
     presentation_video_url = models.TextField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
+    num_installments = models.IntegerField(default=2, help_text='Number of installment payments')
+    whatsapp_community_url = models.TextField(null=True, blank=True,
+        help_text='WhatsApp community link for enrolled students of this program')
+    promotion_details = models.TextField(null=True, blank=True,
+        help_text='Rich text description shown below degree list on mobile')
+    modules_text = models.TextField(null=True, blank=True,
+        help_text='Modules listed on the attestation PDF. Leave blank to auto-generate from degrees/steps.')
+    degrees_per_installment = models.JSONField(
+        null=True, blank=True,
+        help_text='Array mapping each installment to number of degrees unlocked. e.g. [2,1] = 1st payment unlocks 2 degrees, 2nd unlocks 1. If null, uses ceil(total_degrees/num_installments) split.'
+    )
+    completion_threshold = models.IntegerField(default=70, help_text='Min avg completion % to unlock next degree')
+    preview_assets = models.JSONField(
+        null=True, blank=True,
+        help_text='List of teaser videos/audios shown on programme detail page. Format: [{type, title, description, url}]'
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -224,6 +240,18 @@ class PriseDeContact(models.Model):
 
     def __str__(self):
         return self.title
+
+
+from django.db.models.signals import pre_delete
+from django.dispatch import receiver
+
+
+@receiver(pre_delete, sender=Asset)
+def cleanup_asset_progress(sender, instance, **kwargs):
+    from apps.progress.models import AssetCompletion, QCMAttempt, FormSubmission
+    AssetCompletion.objects.filter(asset=instance).delete()
+    QCMAttempt.objects.filter(asset=instance).delete()
+    FormSubmission.objects.filter(asset=instance).delete()
 
 
 class PriseDeContactAsset(models.Model):

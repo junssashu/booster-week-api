@@ -36,16 +36,23 @@ class PriseDeContactSerializer(serializers.ModelSerializer):
 
 
 class ProgramListSerializer(serializers.ModelSerializer):
-    imageUrl = serializers.CharField(source='image_url')
+    imageUrl = serializers.SerializerMethodField()
     durationWeeks = serializers.IntegerField(source='duration_weeks')
-    presentationVideoUrl = serializers.CharField(source='presentation_video_url', allow_null=True)
+    numInstallments = serializers.IntegerField(source='num_installments')
+    presentationVideoUrl = serializers.SerializerMethodField()
     degreeCount = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source='created_at')
 
     class Meta:
         model = Program
         fields = ['id', 'name', 'description', 'imageUrl', 'price',
-                  'durationWeeks', 'presentationVideoUrl', 'degreeCount', 'createdAt']
+                  'durationWeeks', 'numInstallments', 'presentationVideoUrl', 'degreeCount', 'createdAt']
+
+    def get_imageUrl(self, obj):
+        return resolve_url(obj.image_url) if obj.image_url else None
+
+    def get_presentationVideoUrl(self, obj):
+        return resolve_url(obj.presentation_video_url) if obj.presentation_video_url else None
 
     def get_degreeCount(self, obj):
         return obj.degrees.count()
@@ -65,18 +72,38 @@ class DegreeListSerializer(serializers.ModelSerializer):
 
 
 class ProgramDetailSerializer(serializers.ModelSerializer):
-    imageUrl = serializers.CharField(source='image_url')
+    imageUrl = serializers.SerializerMethodField()
     durationWeeks = serializers.IntegerField(source='duration_weeks')
-    presentationVideoUrl = serializers.CharField(source='presentation_video_url', allow_null=True)
+    numInstallments = serializers.IntegerField(source='num_installments')
+    presentationVideoUrl = serializers.SerializerMethodField()
+    degreeCount = serializers.SerializerMethodField()
     degrees = DegreeListSerializer(many=True, read_only=True)
     createdAt = serializers.DateTimeField(source='created_at')
     priseDeContact = serializers.SerializerMethodField()
+    whatsappCommunityUrl = serializers.CharField(
+        source='whatsapp_community_url', allow_null=True, required=False
+    )
+    promotionDetails = serializers.CharField(
+        source='promotion_details', allow_null=True, required=False
+    )
+    previewAssets = serializers.JSONField(
+        source='preview_assets', allow_null=True, required=False
+    )
 
     class Meta:
         model = Program
         fields = ['id', 'name', 'description', 'imageUrl', 'price',
-                  'durationWeeks', 'presentationVideoUrl', 'degrees', 'createdAt',
-                  'priseDeContact']
+                  'durationWeeks', 'numInstallments', 'presentationVideoUrl', 'degreeCount', 'degrees', 'createdAt',
+                  'priseDeContact', 'whatsappCommunityUrl', 'promotionDetails', 'previewAssets']
+
+    def get_imageUrl(self, obj):
+        return resolve_url(obj.image_url) if obj.image_url else None
+
+    def get_presentationVideoUrl(self, obj):
+        return resolve_url(obj.presentation_video_url) if obj.presentation_video_url else None
+
+    def get_degreeCount(self, obj):
+        return obj.degrees.count()
 
     def get_priseDeContact(self, obj):
         pdc = obj.prises_de_contact.first()
@@ -133,7 +160,16 @@ class StepListSerializer(serializers.ModelSerializer):
             return 'locked'
         from apps.progress.models import StepProgress
         sp = StepProgress.objects.filter(user=user, step=obj).first()
-        return sp.status if sp else 'locked'
+        if sp:
+            return sp.status
+        # No progress record: first step is always available, others depend on previous step
+        prev_step = obj.degree.steps.filter(order_index__lt=obj.order_index).order_by('-order_index').first()
+        if not prev_step:
+            return 'available'
+        prev_sp = StepProgress.objects.filter(user=user, step=prev_step).first()
+        if prev_sp and prev_sp.completion_percentage >= 70:
+            return 'available'
+        return 'locked'
 
     def get_completionPercentage(self, obj):
         user = self.context.get('user')
@@ -195,11 +231,11 @@ class DegreeDetailSerializer(serializers.ModelSerializer):
         return round(total_pct / total_steps)
 
     def get_presentationVideoUrl(self, obj):
-        """Return the external_url of the first video asset found across steps."""
+        """Return the resolved URL of the first video asset found across steps."""
         for step in obj.steps.all().order_by('order_index'):
             for asset in step.assets.all().order_by('order_index'):
                 if asset.type == 'video':
-                    return asset.external_url
+                    return resolve_url(asset.external_url) if asset.external_url else None
         return None
 
     def get_consigne(self, obj):
@@ -242,15 +278,27 @@ class AssetSummarySerializer(serializers.ModelSerializer):
     """Used when listing assets in step detail."""
     orderIndex = serializers.IntegerField(source='order_index')
     externalUrl = serializers.SerializerMethodField()
+    isCompleted = serializers.SerializerMethodField()
     consigneText = serializers.SerializerMethodField()
     passingScore = serializers.SerializerMethodField()
     questionCount = serializers.SerializerMethodField()
+    questions = serializers.SerializerMethodField()
+    lastScore = serializers.SerializerMethodField()
     formFields = serializers.SerializerMethodField()
+    lastSubmission = serializers.SerializerMethodField()
 
     class Meta:
         model = Asset
         fields = ['id', 'type', 'title', 'description', 'externalUrl',
-                  'orderIndex', 'consigneText', 'passingScore', 'questionCount', 'formFields']
+                  'orderIndex', 'isCompleted', 'consigneText', 'passingScore',
+                  'questionCount', 'questions', 'lastScore', 'formFields', 'lastSubmission']
+
+    def get_isCompleted(self, obj):
+        user = self.context.get('user')
+        if not user or obj.type == 'consigne':
+            return None
+        from apps.progress.models import AssetCompletion
+        return AssetCompletion.objects.filter(user=user, asset=obj).exists()
 
     def get_externalUrl(self, obj):
         return resolve_url(obj.external_url)
@@ -270,10 +318,50 @@ class AssetSummarySerializer(serializers.ModelSerializer):
             return obj.questions.count()
         return None
 
+    def get_questions(self, obj):
+        if obj.type == 'qcm':
+            questions = obj.questions.all().order_by('order_index')
+            return [
+                {'index': q.order_index, 'question': q.question, 'options': q.options}
+                for q in questions
+            ]
+        return None
+
+    def get_lastScore(self, obj):
+        if obj.type != 'qcm':
+            return None
+        user = self.context.get('user')
+        if not user:
+            return None
+        from apps.progress.models import QCMAttempt
+        attempt = QCMAttempt.objects.filter(user=user, asset=obj).order_by('-attempted_at').first()
+        if not attempt:
+            return None
+        return {
+            'score': attempt.score,
+            'passed': attempt.passed,
+            'attemptedAt': attempt.attempted_at,
+        }
+
     def get_formFields(self, obj):
         if obj.type == 'form':
             return FormFieldSerializer(obj.form_fields.all(), many=True).data
         return None
+
+    def get_lastSubmission(self, obj):
+        if obj.type != 'form':
+            return None
+        user = self.context.get('user')
+        if not user:
+            return None
+        from apps.progress.models import FormSubmission
+        submission = FormSubmission.objects.filter(user=user, asset=obj).order_by('-submitted_at').first()
+        if not submission:
+            return None
+        return {
+            'responses': submission.responses,
+            'submittedAt': submission.submitted_at,
+        }
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
@@ -283,8 +371,11 @@ class AssetSummarySerializer(serializers.ModelSerializer):
         if instance.type != 'qcm':
             data.pop('passingScore', None)
             data.pop('questionCount', None)
+            data.pop('questions', None)
+            data.pop('lastScore', None)
         if instance.type != 'form':
             data.pop('formFields', None)
+            data.pop('lastSubmission', None)
         return data
 
 
@@ -310,7 +401,16 @@ class StepDetailSerializer(serializers.ModelSerializer):
             return 'locked'
         from apps.progress.models import StepProgress
         sp = StepProgress.objects.filter(user=user, step=obj).first()
-        return sp.status if sp else 'locked'
+        if sp:
+            return sp.status
+        # No progress record: first step is always available, others depend on previous step
+        prev_step = obj.degree.steps.filter(order_index__lt=obj.order_index).order_by('-order_index').first()
+        if not prev_step:
+            return 'available'
+        prev_sp = StepProgress.objects.filter(user=user, step=prev_step).first()
+        if prev_sp and prev_sp.completion_percentage >= 70:
+            return 'available'
+        return 'locked'
 
     def get_completionPercentage(self, obj):
         user = self.context.get('user')
@@ -342,7 +442,7 @@ class StepDetailSerializer(serializers.ModelSerializer):
             if not accepted:
                 assets = assets.filter(type='consigne')
 
-        return AssetSummarySerializer(assets, many=True).data
+        return AssetSummarySerializer(assets, many=True, context=self.context).data
 
     def get_priseDeContact(self, obj):
         pdc = obj.prises_de_contact.first()
