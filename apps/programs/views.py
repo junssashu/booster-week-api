@@ -118,8 +118,19 @@ def _check_step_accessible(user, step):
     """Check step is not locked."""
     from apps.progress.models import StepProgress
     sp = StepProgress.objects.filter(user=user, step=step).first()
-    if not sp or sp.status == 'locked':
-        raise ForbiddenError('Complete previous step first.')
+    if sp:
+        if sp.status == 'locked':
+            raise ForbiddenError('Complete previous step first.')
+        return  # Has progress record and not locked — accessible
+    # No progress record: first step (no previous) is always accessible
+    prev_step = step.degree.steps.filter(order_index__lt=step.order_index).order_by('-order_index').first()
+    if not prev_step:
+        return
+    # For other steps, check if previous step is completed (70%+)
+    prev_sp = StepProgress.objects.filter(user=user, step=prev_step).first()
+    if prev_sp and prev_sp.completion_percentage >= 70:
+        return
+    raise ForbiddenError('Complete previous step first.')
 
 
 class ProgramListView(APIView):

@@ -1,4 +1,8 @@
+import logging
+
 from rest_framework import viewsets
+
+logger = logging.getLogger(__name__)
 
 from apps.core.permissions import IsAdmin
 from apps.programs.models import (
@@ -41,6 +45,16 @@ class AdminDegreeViewSet(viewsets.ModelViewSet):
             qs = qs.filter(program_id=program_id)
         return qs
 
+    def perform_destroy(self, instance):
+        from apps.progress.models import StepProgress, AssetCompletion, QCMAttempt, FormSubmission
+        steps = instance.steps.all()
+        assets = Asset.objects.filter(step__in=steps)
+        StepProgress.objects.filter(step__in=steps).delete()
+        AssetCompletion.objects.filter(asset__in=assets).delete()
+        QCMAttempt.objects.filter(asset__in=assets).delete()
+        FormSubmission.objects.filter(asset__in=assets).delete()
+        instance.delete()
+
 
 class AdminStepViewSet(viewsets.ModelViewSet):
     serializer_class = AdminStepSerializer
@@ -58,6 +72,15 @@ class AdminStepViewSet(viewsets.ModelViewSet):
             qs = qs.filter(degree_id=degree_id)
         return qs
 
+    def perform_destroy(self, instance):
+        from apps.progress.models import StepProgress, AssetCompletion, QCMAttempt, FormSubmission
+        assets = instance.assets.all()
+        StepProgress.objects.filter(step=instance).delete()
+        AssetCompletion.objects.filter(asset__in=assets).delete()
+        QCMAttempt.objects.filter(asset__in=assets).delete()
+        FormSubmission.objects.filter(asset__in=assets).delete()
+        instance.delete()
+
 
 class AdminAssetViewSet(viewsets.ModelViewSet):
     serializer_class = AdminAssetSerializer
@@ -69,6 +92,47 @@ class AdminAssetViewSet(viewsets.ModelViewSet):
         if step_id:
             qs = qs.filter(step_id=step_id)
         return qs
+
+    def perform_create(self, serializer):
+        asset = serializer.save()
+        self._save_nested(asset, self.request.data)
+
+    def perform_update(self, serializer):
+        asset = serializer.save()
+        self._save_nested(asset, self.request.data)
+
+    def _save_nested(self, asset, data):
+        """Save nested QCM questions and form fields from request payload."""
+        from apps.programs.models import QCMQuestion, FormFieldDef
+
+        # Handle QCM questions
+        questions = data.get('questions')
+        if questions is not None and asset.type == 'qcm':
+            # Delete existing and recreate (simpler than diffing)
+            asset.questions.all().delete()
+            for i, q in enumerate(questions):
+                QCMQuestion.objects.create(
+                    asset=asset,
+                    question=q.get('question', ''),
+                    options=q.get('options', []),
+                    correct_index=q.get('correctIndex', 0),
+                    order_index=q.get('index', i),
+                )
+
+        # Handle form fields
+        form_fields = data.get('formFields')
+        if form_fields is not None and asset.type == 'form':
+            asset.form_fields.all().delete()
+            for i, f in enumerate(form_fields):
+                FormFieldDef.objects.create(
+                    id=f.get('id', f'field_{asset.id}_{i}'),
+                    asset=asset,
+                    label=f.get('label', ''),
+                    type=f.get('type', 'text'),
+                    required=f.get('required', False),
+                    select_options=f.get('selectOptions'),
+                    order_index=f.get('orderIndex', i),
+                )
 
 
 class AdminQCMQuestionViewSet(viewsets.ModelViewSet):
@@ -141,21 +205,27 @@ class AdminPdcAssetViewSet(viewsets.ModelViewSet):
 # Additional admin views (sessions, users, enrollments, etc.)
 # ===================================================================
 
-from django.db.models import Q
+from django.db.models import Count, Q
 from rest_framework import mixins, status
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.sessions.models import LiveReplaySession
+from apps.sessions.models import LiveReplaySession, SessionAttendance
 from apps.accounts.models import User
 from apps.enrollments.models import Enrollment, Payment, PromoCode
-from apps.testimonies.models import Testimony
-from apps.content.models import FAQItem, ContactInfo, ContactSubmission
+from apps.testimonies.models import Testimony, TestimonyComment
+from apps.content.models import FAQItem, ContactInfo, ContactSubmission, AppSettings
 from .serializers import (
     AdminSessionSerializer, AdminUserSerializer, AdminEnrollmentSerializer,
+    AdminEnrollmentWriteSerializer,
     AdminPaymentSerializer, AdminTestimonySerializer, AdminFAQSerializer,
     AdminContactInfoSerializer, AdminContactSubmissionSerializer,
     AdminPromoCodeSerializer,
+    AdminAppSettingsSerializer,
+    AdminTestimonyCommentSerializer,
+    AdminSessionAttendanceSerializer,
+    AdminStepProgressSerializer, AdminQCMAttemptSerializer, AdminFormSubmissionSerializer,
 )
 
 
@@ -167,6 +237,30 @@ class AdminSessionViewSet(viewsets.ModelViewSet):
     serializer_class = AdminSessionSerializer
     permission_classes = [IsAdmin]
     queryset = LiveReplaySession.objects.all().order_by('-date')
+
+    def get_queryset(self):
+        return super().get_queryset().annotate(attendance_count=Count('attendances'))
+
+    @action(detail=True, methods=['get'], url_path='attendance')
+    def attendance(self, request, pk=None):
+        session = self.get_object()
+        attendances = SessionAttendance.objects.filter(session=session).select_related('user').order_by('-joined_at')
+        serializer = AdminSessionAttendanceSerializer(attendances, many=True)
+        return Response({'data': serializer.data})
+
+    @action(detail=True, methods=['get'], url_path='attendance/export')
+    def attendance_export(self, request, pk=None):
+        import csv
+        from django.http import HttpResponse
+        session = self.get_object()
+        attendances = SessionAttendance.objects.filter(session=session).select_related('user').order_by('-joined_at')
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = f'attachment; filename="attendance-{session.id}.csv"'
+        writer = csv.writer(response)
+        writer.writerow(['Prenom', 'Nom', 'Telephone', 'Date'])
+        for a in attendances:
+            writer.writerow([a.user.first_name, a.user.last_name, a.user.phone, a.joined_at.isoformat()])
+        return response
 
 
 # ---------------------------------------------------------------------------
@@ -193,28 +287,121 @@ class AdminUserViewSet(
             )
         return qs
 
+    @action(detail=True, methods=['post'], url_path='reset')
+    def reset_user(self, request, pk=None):
+        """Reset all data for a user: enrollments, payments, progress, promo codes, testimonies."""
+        user = self.get_object()
+
+        from apps.enrollments.models import Enrollment, Payment, PromoCodeRedemption
+        from apps.progress.models import (
+            StepProgress, AssetCompletion, QCMAttempt, FormSubmission,
+            PriseDeContactAcceptance, ConsigneAcceptance,
+        )
+        from apps.testimonies.models import Testimony, TestimonyReaction, TestimonyComment
+
+        counts = {}
+
+        # Progress
+        counts['stepProgress'] = StepProgress.objects.filter(user=user).delete()[0]
+        counts['assetCompletions'] = AssetCompletion.objects.filter(user=user).delete()[0]
+        counts['qcmAttempts'] = QCMAttempt.objects.filter(user=user).delete()[0]
+        counts['formSubmissions'] = FormSubmission.objects.filter(user=user).delete()[0]
+        counts['pdcAcceptances'] = PriseDeContactAcceptance.objects.filter(user=user).delete()[0]
+        counts['consigneAcceptances'] = ConsigneAcceptance.objects.filter(user=user).delete()[0]
+
+        # Payments (delete before enrollments to avoid FK issues)
+        counts['payments'] = Payment.objects.filter(enrollment__user=user).delete()[0]
+        counts['promoRedemptions'] = PromoCodeRedemption.objects.filter(user=user).delete()[0]
+
+        # Enrollments
+        counts['enrollments'] = Enrollment.objects.filter(user=user).delete()[0]
+
+        # Testimonies (optional — user content)
+        counts['reactions'] = TestimonyReaction.objects.filter(user=user).delete()[0]
+        counts['comments'] = TestimonyComment.objects.filter(author=user).delete()[0]
+        counts['testimonies'] = Testimony.objects.filter(author=user).delete()[0]
+
+        logger.info('Admin reset user %s: %s', user.id, counts)
+
+        return Response({
+            'data': {
+                'userId': user.id,
+                'userName': f'{user.first_name} {user.last_name}',
+                'deleted': counts,
+            }
+        })
+
 
 # ---------------------------------------------------------------------------
 # Enrollments — list (filterable by status, program)
 # ---------------------------------------------------------------------------
 
-class AdminEnrollmentViewSet(
-    mixins.ListModelMixin,
-    mixins.RetrieveModelMixin,
-    viewsets.GenericViewSet,
-):
-    serializer_class = AdminEnrollmentSerializer
+class AdminEnrollmentViewSet(viewsets.ModelViewSet):
+    queryset = Enrollment.objects.select_related('user', 'program', 'mandataire').order_by('-created_at')
     permission_classes = [IsAdmin]
 
+    def get_serializer_class(self):
+        if self.action in ('create', 'partial_update', 'update'):
+            return AdminEnrollmentWriteSerializer
+        return AdminEnrollmentSerializer
+
     def get_queryset(self):
-        qs = Enrollment.objects.select_related('user', 'program').order_by('-created_at')
-        payment_status = self.request.query_params.get('status')
-        if payment_status:
-            qs = qs.filter(payment_status=payment_status)
+        qs = super().get_queryset()
+        status = self.request.query_params.get('status')
         program_id = self.request.query_params.get('programId')
+        user_id = self.request.query_params.get('userId')
+        if status:
+            qs = qs.filter(payment_status=status)
         if program_id:
             qs = qs.filter(program_id=program_id)
+        if user_id:
+            qs = qs.filter(user_id=user_id)
+        mandataire_id = self.request.query_params.get('mandataireId')
+        if mandataire_id == 'none':
+            qs = qs.filter(mandataire__isnull=True)
+        elif mandataire_id:
+            qs = qs.filter(mandataire_id=mandataire_id)
         return qs
+
+    def perform_destroy(self, instance):
+        from apps.enrollments.views import _cleanup_enrollment_progress
+        _cleanup_enrollment_progress(instance.user, instance.program)
+        if instance.payments.exists():
+            instance.payment_status = 'cancelled'
+            instance.save(update_fields=['payment_status'])
+        else:
+            instance.delete()
+
+    @action(detail=True, methods=['get'], url_path='invoice')
+    def invoice(self, request, pk=None):
+        enrollment = self.get_object()
+        payments = enrollment.payments.filter(status='completed').order_by('date')
+        return Response({'data': {
+            'invoiceNumber': f'BWC-{enrollment.id.upper()}-{enrollment.created_at.strftime("%Y%m%d")}',
+            'student': {
+                'name': f'{enrollment.user.first_name} {enrollment.user.last_name}',
+                'phone': enrollment.user.phone,
+                'email': enrollment.user.email,
+            },
+            'program': {
+                'name': enrollment.program.name,
+                'price': enrollment.program.price,
+            },
+            'enrollment': {
+                'id': enrollment.id,
+                'paymentType': enrollment.payment_type,
+                'paymentStatus': enrollment.payment_status,
+                'amountPaid': enrollment.amount_paid,
+                'totalAmount': enrollment.total_amount,
+                'enrollmentDate': enrollment.enrollment_date,
+            },
+            'payments': [{
+                'amount': p.amount,
+                'method': p.method,
+                'date': p.date,
+                'transactionRef': p.transaction_ref,
+            } for p in payments],
+        }})
 
 
 # ---------------------------------------------------------------------------
@@ -243,18 +430,40 @@ class AdminPaymentViewSet(
 
 
 # ---------------------------------------------------------------------------
-# Testimonies — list + delete (moderation)
+# Testimonies — full CRUD (admin)
 # ---------------------------------------------------------------------------
 
-class AdminTestimonyViewSet(
+class AdminTestimonyViewSet(viewsets.ModelViewSet):
+    serializer_class = AdminTestimonySerializer
+    permission_classes = [IsAdmin]
+    queryset = Testimony.objects.select_related('author').prefetch_related('comments__author').order_by('-created_at')
+
+
+# ---------------------------------------------------------------------------
+# Testimony Comments — list + delete + bulk-delete (moderation)
+# ---------------------------------------------------------------------------
+
+class AdminTestimonyCommentViewSet(
     mixins.ListModelMixin,
-    mixins.RetrieveModelMixin,
     mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
-    serializer_class = AdminTestimonySerializer
+    queryset = TestimonyComment.objects.select_related('author', 'testimony').order_by('-created_at')
+    serializer_class = AdminTestimonyCommentSerializer
     permission_classes = [IsAdmin]
-    queryset = Testimony.objects.select_related('author').order_by('-created_at')
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        testimony_id = self.request.query_params.get('testimonyId')
+        if testimony_id:
+            qs = qs.filter(testimony_id=testimony_id)
+        return qs
+
+    @action(detail=False, methods=['post'], url_path='bulk-delete')
+    def bulk_delete(self, request):
+        ids = request.data.get('ids', [])
+        deleted, _ = TestimonyComment.objects.filter(id__in=ids).delete()
+        return Response({'deleted': deleted})
 
 
 # ---------------------------------------------------------------------------
@@ -311,17 +520,36 @@ class AdminContactSubmissionViewSet(
 
 
 # ---------------------------------------------------------------------------
-# Promo Codes — list (read-only)
+# Promo Codes — full CRUD
 # ---------------------------------------------------------------------------
 
-class AdminPromoCodeViewSet(
-    mixins.ListModelMixin,
-    mixins.RetrieveModelMixin,
-    viewsets.GenericViewSet,
-):
+class AdminPromoCodeViewSet(viewsets.ModelViewSet):
+    queryset = PromoCode.objects.select_related('creator').order_by('-created_at')
     serializer_class = AdminPromoCodeSerializer
     permission_classes = [IsAdmin]
-    queryset = PromoCode.objects.select_related('creator').order_by('-created_at')
+
+    def perform_create(self, serializer):
+        serializer.save(creator=self.request.user)
+
+
+# ---------------------------------------------------------------------------
+# App Settings — singleton GET / PUT
+# ---------------------------------------------------------------------------
+
+class AdminAppSettingsView(APIView):
+    permission_classes = [IsAdmin]
+
+    def get(self, request):
+        settings, _ = AppSettings.objects.get_or_create(id=1)
+        serializer = AdminAppSettingsSerializer(settings)
+        return Response({'data': serializer.data})
+
+    def put(self, request):
+        settings, _ = AppSettings.objects.get_or_create(id=1)
+        serializer = AdminAppSettingsSerializer(settings, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response({'data': serializer.data})
 
 
 # ===================================================================
@@ -506,3 +734,124 @@ class AdminCompletionStatsView(APIView):
             })
 
         return Response({'data': stats})
+
+
+# ---------------------------------------------------------------------------
+# Progress Tracking
+# ---------------------------------------------------------------------------
+
+from django.db.models import Avg
+from apps.progress.models import StepProgress, QCMAttempt, FormSubmission
+
+
+class AdminUserProgressView(APIView):
+    permission_classes = [IsAdmin]
+
+    def get(self, request, user_id):
+        program_id = request.query_params.get('programId')
+        if not program_id:
+            return Response({'error': 'programId required'}, status=400)
+
+        step_progress = StepProgress.objects.filter(
+            user_id=user_id, program_id=program_id
+        ).select_related('step__degree').order_by('step__degree__order_index', 'step__order_index')
+
+        qcm_attempts = QCMAttempt.objects.filter(
+            user_id=user_id, asset__step__degree__program_id=program_id
+        ).select_related('asset').order_by('-attempted_at')[:50]
+
+        form_submissions = FormSubmission.objects.filter(
+            user_id=user_id, asset__step__degree__program_id=program_id
+        ).select_related('asset').order_by('-submitted_at')[:50]
+
+        # Group step progress by degree
+        degrees = {}
+        for sp in step_progress:
+            deg_id = sp.step.degree.id
+            if deg_id not in degrees:
+                degrees[deg_id] = {
+                    'degreeId': deg_id,
+                    'degreeTitle': sp.step.degree.title,
+                    'steps': [],
+                }
+            degrees[deg_id]['steps'].append(AdminStepProgressSerializer(sp).data)
+
+        return Response({'data': {
+            'degrees': list(degrees.values()),
+            'qcmAttempts': AdminQCMAttemptSerializer(qcm_attempts, many=True).data,
+            'formSubmissions': AdminFormSubmissionSerializer(form_submissions, many=True).data,
+        }})
+
+
+class AdminProgressStatsView(APIView):
+    permission_classes = [IsAdmin]
+
+    def get(self, request):
+        program_id = request.query_params.get('programId')
+        if not program_id:
+            return Response({'error': 'programId required'}, status=400)
+
+        from apps.programs.models import Degree
+
+        degrees = Degree.objects.filter(program_id=program_id).order_by('order_index')
+
+        funnel = []
+        for degree in degrees:
+            student_count = StepProgress.objects.filter(
+                program_id=program_id,
+                step__degree=degree,
+                completion_percentage__gte=70,
+            ).values('user').distinct().count()
+
+            avg_score = QCMAttempt.objects.filter(
+                asset__step__degree=degree,
+            ).aggregate(avg=Avg('score'))['avg']
+
+            funnel.append({
+                'degreeId': degree.id,
+                'degreeTitle': degree.title,
+                'orderIndex': degree.order_index,
+                'studentCount': student_count,
+                'avgQcmScore': round(avg_score, 1) if avg_score else None,
+            })
+
+        total_enrolled = Enrollment.objects.filter(program_id=program_id).count()
+
+        return Response({'data': {
+            'totalEnrolled': total_enrolled,
+            'funnel': funnel,
+        }})
+
+
+class AdminProgressExportView(APIView):
+    permission_classes = [IsAdmin]
+
+    def get(self, request):
+        import csv
+        from django.http import HttpResponse
+
+        program_id = request.query_params.get('programId')
+        if not program_id:
+            return Response({'error': 'programId required'}, status=400)
+
+        progress = StepProgress.objects.filter(
+            program_id=program_id
+        ).select_related('user', 'step__degree').order_by(
+            'user__last_name', 'step__degree__order_index', 'step__order_index'
+        )
+
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = f'attachment; filename="progress-{program_id}.csv"'
+        writer = csv.writer(response)
+        writer.writerow(['Etudiant', 'Telephone', 'Degre', 'Etape', 'Statut', 'Completion %', 'Derniere MAJ'])
+        for sp in progress:
+            writer.writerow([
+                f'{sp.user.first_name} {sp.user.last_name}',
+                sp.user.phone,
+                sp.step.degree.title,
+                sp.step.title,
+                sp.status,
+                sp.completion_percentage,
+                sp.updated_at.isoformat(),
+            ])
+        return response

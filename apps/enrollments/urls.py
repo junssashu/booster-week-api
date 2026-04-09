@@ -5,7 +5,9 @@ from . import views
 urlpatterns = [
     path('enrollments', views.EnrollmentListCreateView.as_view(), name='enrollment-list-create'),
     path('enrollments/<str:enrollment_id>', views.EnrollmentDetailView.as_view(), name='enrollment-detail'),
+    path('enrollments/<str:enrollment_id>/pending-payment', views.EnrollmentPendingPaymentView.as_view(), name='enrollment-pending-payment'),
     path('enrollments/<str:enrollment_id>/payments', views.EnrollmentPaymentsView.as_view(), name='enrollment-payments'),
+    path('enrollments/<str:enrollment_id>/attestation', views.AttestationView.as_view(), name='enrollment-attestation'),
     path('payments/initiate', views.PaymentInitiateView.as_view(), name='payment-initiate'),
     path('payments/verify', views.PaymentVerifyView.as_view(), name='payment-verify'),
     path('payments/webhook', views.PaymentWebhookView.as_view(), name='payment-webhook'),

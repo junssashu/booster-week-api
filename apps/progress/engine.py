@@ -15,7 +15,7 @@ def check_step_completion(user, step):
     all_complete = True
 
     for asset in assets:
-        if asset.type in ('pdf', 'audio', 'video'):
+        if asset.type in ('pdf', 'audio', 'video', 'image'):
             if not AssetCompletion.objects.filter(user=user, asset=asset).exists():
                 all_complete = False
                 break
@@ -33,25 +33,36 @@ def check_step_completion(user, step):
                 all_complete = False
                 break
 
-    if not all_complete:
-        return False, None
+    # Always update completion percentage incrementally
+    _, _, current_progress = get_step_progress_info(user, step)
+    pct = round(current_progress * 100)
 
-    # Mark step as completed
     sp, _ = StepProgress.objects.get_or_create(
         user=user,
         step=step,
-        defaults={'program': step.degree.program, 'status': 'completed'}
+        defaults={'program': step.degree.program, 'status': 'in_progress', 'completion_percentage': pct}
     )
+
+    # Update percentage if changed
+    if sp.completion_percentage != pct:
+        sp.completion_percentage = pct
+        sp.save(update_fields=['completion_percentage', 'updated_at'])
+
+    if not all_complete:
+        # Update status to in_progress if not already
+        if sp.status not in ('in_progress', 'completed'):
+            sp.status = 'in_progress'
+            sp.save(update_fields=['status', 'updated_at'])
+        # Check if >= 70% unlocks next step
+        if pct >= 70:
+            unlock_next_step(user, step)
+        return False, None
+
+    # Mark step as completed
     if sp.status != 'completed':
         sp.status = 'completed'
-        sp.save()
-
-    # For steps without QCM, set completion_percentage to 100 when completed.
-    # Steps with QCM have their completion_percentage set by the QCM submit view.
-    has_qcm = step.assets.filter(type='qcm').exists()
-    if not has_qcm and sp.completion_percentage != 100:
         sp.completion_percentage = 100
-        sp.save(update_fields=['completion_percentage', 'updated_at'])
+        sp.save(update_fields=['status', 'completion_percentage', 'updated_at'])
 
     # Unlock next step
     next_step_info = unlock_next_step(user, step)
@@ -66,15 +77,15 @@ def unlock_next_step(user, completed_step):
     # Try next step in same degree
     next_step = Step.objects.filter(
         degree=degree,
-        order_index=completed_step.order_index + 1,
-    ).first()
+        order_index__gt=completed_step.order_index,
+    ).order_by('order_index').first()
 
     if not next_step:
         # Try first step of next degree
         next_degree = Degree.objects.filter(
             program=program,
-            order_index=degree.order_index + 1,
-        ).first()
+            order_index__gt=degree.order_index,
+        ).order_by('order_index').first()
 
         if next_degree:
             # Check if next degree is accessible
@@ -83,8 +94,8 @@ def unlock_next_step(user, completed_step):
             ).first()
             if enrollment and enrollment.can_access_degree(next_degree):
                 next_step = Step.objects.filter(
-                    degree=next_degree, order_index=0
-                ).first()
+                    degree=next_degree,
+                ).order_by('order_index').first()
 
     if next_step:
         sp, created = StepProgress.objects.get_or_create(
@@ -111,7 +122,7 @@ def get_step_progress_info(user, step):
     completed = 0
 
     for asset in assets:
-        if asset.type in ('pdf', 'audio', 'video'):
+        if asset.type in ('pdf', 'audio', 'video', 'image'):
             if AssetCompletion.objects.filter(user=user, asset=asset).exists():
                 completed += 1
         elif asset.type == 'qcm':

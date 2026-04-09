@@ -67,3 +67,22 @@ class TestimonyComment(models.Model):
         if not self.id:
             self.id = generate_prefixed_id('com')
         super().save(*args, **kwargs)
+
+
+from django.db.models.signals import post_save, post_delete
+from django.dispatch import receiver
+
+
+@receiver([post_save, post_delete], sender=TestimonyComment)
+def update_testimony_comment_count(sender, instance, **kwargs):
+    testimony = instance.testimony
+    testimony.comment_count = testimony.comments.count()
+    testimony.save(update_fields=['comment_count'])
+
+
+@receiver([post_save, post_delete], sender=TestimonyReaction)
+def update_testimony_reaction_counts(sender, instance, **kwargs):
+    testimony = instance.testimony
+    testimony.like_count = testimony.reactions.filter(reaction_type='like').count()
+    testimony.heart_count = testimony.reactions.filter(reaction_type='heart').count()
+    testimony.save(update_fields=['like_count', 'heart_count'])

@@ -40,8 +40,16 @@ def _require_enrollment_and_access(user, asset_or_step):
         raise ForbiddenError('Complete second payment to unlock this degree.')
 
     sp = StepProgress.objects.filter(user=user, step=step).first()
-    if not sp or sp.status == 'locked':
+    if sp and sp.status == 'locked':
         raise ForbiddenError('Complete previous step first.')
+
+    if not sp:
+        # No progress record: first step in degree is always accessible
+        prev_step = step.degree.steps.filter(order_index__lt=step.order_index).order_by('-order_index').first()
+        if prev_step:
+            prev_sp = StepProgress.objects.filter(user=user, step=prev_step).first()
+            if not prev_sp or prev_sp.completion_percentage < 70:
+                raise ForbiddenError('Complete previous step first.')
 
     return enrollment, step
 
@@ -260,8 +268,8 @@ class MarkAssetCompleteView(APIView):
         except Asset.DoesNotExist:
             raise NotFoundError('Asset does not exist.')
 
-        if asset.type not in ('pdf', 'audio', 'video'):
-            raise ValidationError('Only pdf, audio, and video assets can be marked complete this way.')
+        if asset.type not in ('pdf', 'audio', 'video', 'image'):
+            raise ValidationError('Only pdf, audio, video, and image assets can be marked complete this way.')
 
         enrollment, step = _require_enrollment_and_access(request.user, asset)
 
@@ -510,9 +518,18 @@ class FormSubmitView(APIView):
         responses = request.data.get('responses', [])
         field_defs = {f.id: f for f in asset.form_fields.all()}
 
-        # Validate
+        # Validate responses format
+        if not isinstance(responses, list):
+            raise ValidationError('Responses must be a list of {fieldId, value} objects.')
+
         errors = []
-        response_map = {r.get('fieldId'): r.get('value', '') for r in responses}
+        response_map = {}
+        for r in responses:
+            if isinstance(r, dict):
+                response_map[r.get('fieldId', '')] = r.get('value', '')
+            elif isinstance(r, str):
+                # Legacy format — skip invalid entries
+                continue
 
         for field_id, field_def in field_defs.items():
             value = response_map.get(field_id, '')

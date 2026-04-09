@@ -7,6 +7,9 @@ from rest_framework.response import Response
 from rest_framework.status import HTTP_200_OK, HTTP_503_SERVICE_UNAVAILABLE
 from rest_framework.views import APIView
 
+from apps.content.models import AppSettings
+from apps.core.storage import resolve_url
+
 
 class AppConfigView(APIView):
     permission_classes = [AllowAny]
@@ -49,9 +52,16 @@ class AppConfigView(APIView):
         ],
     )
     def get(self, request):
+        app_settings, _ = AppSettings.objects.get_or_create(id=1)
+        music_url = resolve_url(app_settings.background_music_url or settings.BACKGROUND_MUSIC_URL)
+        video_url = resolve_url(app_settings.presentation_video_url) if app_settings.presentation_video_url else ''
         return Response({
             'data': {
-                'backgroundMusicUrl': settings.BACKGROUND_MUSIC_URL,
+                'backgroundMusicUrl': music_url,
+                'presentationVideoUrl': video_url,
+                'appName': app_settings.app_name,
+                'footerTagline': app_settings.footer_tagline,
+                'socialLinks': app_settings.social_links or {},
             }
         })
 

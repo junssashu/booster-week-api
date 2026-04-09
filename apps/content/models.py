@@ -44,3 +44,21 @@ class ContactInfo(models.Model):
 
     class Meta:
         db_table = 'contact_info'
+
+
+class AppSettings(models.Model):
+    id = models.IntegerField(primary_key=True, default=1)
+    background_music_url = models.URLField(max_length=500, blank=True, default='')
+    presentation_video_url = models.URLField(max_length=500, blank=True, default='')
+    app_name = models.CharField(max_length=100, default='Booster Week')
+    social_links = models.JSONField(default=dict, blank=True)
+    footer_tagline = models.TextField(default='Elevez vos vibrations et transformez votre quotidien.')
+    payment_expiry_minutes = models.IntegerField(default=15, help_text='Minutes before a pending payment expires')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'app_settings'
+        verbose_name_plural = 'App Settings'
+
+    def __str__(self):
+        return f'App Settings (v{self.updated_at})'

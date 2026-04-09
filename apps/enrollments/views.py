@@ -1,9 +1,13 @@
 import logging
 import math
-from datetime import timedelta
+import os
+import subprocess
+import tempfile
+import threading
+from datetime import date, timedelta
 
 from django.conf import settings
-from django.db import transaction
+from django.db import models, transaction
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -34,6 +38,33 @@ from .services import MoneyFusionError, MoneyFusionService
 logger = logging.getLogger(__name__)
 
 
+def _cleanup_enrollment_progress(user, program):
+    """Remove all progress data for a user+program when enrollment is cancelled/deleted.
+
+    Cleans up: StepProgress, AssetCompletion, QCMAttempt, FormSubmission,
+    and PdcAcceptance for all steps/assets in the program.
+    """
+    from apps.progress.models import StepProgress, AssetCompletion, QCMAttempt, FormSubmission
+    from apps.programs.models import Step, Asset, PriseDeContact
+
+    steps = Step.objects.filter(degree__program=program)
+    assets = Asset.objects.filter(step__degree__program=program)
+    pdcs = PriseDeContact.objects.filter(
+        models.Q(program=program) | models.Q(degree__program=program) | models.Q(step__degree__program=program)
+    )
+
+    StepProgress.objects.filter(user=user, step__in=steps).delete()
+    AssetCompletion.objects.filter(user=user, asset__in=assets).delete()
+    QCMAttempt.objects.filter(user=user, asset__in=assets).delete()
+    FormSubmission.objects.filter(user=user, asset__in=assets).delete()
+
+    # Clean PDC acceptances
+    from apps.progress.models import PriseDeContactAcceptance
+    PriseDeContactAcceptance.objects.filter(user=user, prise_de_contact__in=pdcs).delete()
+
+    logger.info('Cleaned up progress data for user=%s, program=%s', user.id, program.id)
+
+
 def _complete_payment(payment_id):
     """Atomically complete a payment and update its enrollment.
 
@@ -60,8 +91,11 @@ def _complete_payment(payment_id):
             enrollment.payment_status = 'partial'
         enrollment.save()
 
-        # Initialize progress on first payment
-        _initialize_progress(enrollment)
+        # Initialize progress on first payment (non-critical — don't block payment)
+        try:
+            _initialize_progress(enrollment)
+        except Exception:
+            logger.exception('Failed to init progress for enrollment %s (payment still completed)', enrollment.id)
 
         return payment
 
@@ -254,7 +288,7 @@ class EnrollmentListCreateView(APIView):
         },
     )
     def get(self, request):
-        qs = Enrollment.objects.filter(user=request.user).select_related('program')
+        qs = Enrollment.objects.filter(user=request.user).exclude(payment_status='cancelled').select_related('program').prefetch_related('payments', 'program__degrees__steps')
 
         payment_status = request.query_params.get('paymentStatus')
         if payment_status:
@@ -325,6 +359,14 @@ class EnrollmentListCreateView(APIView):
         except Program.DoesNotExist:
             raise NotFoundError('Program does not exist.')
 
+        # Delete cancelled enrollments and their orphaned progress to allow re-enrollment
+        cancelled = Enrollment.objects.filter(
+            user=request.user, program=program, payment_status='cancelled'
+        )
+        if cancelled.exists():
+            _cleanup_enrollment_progress(request.user, program)
+            cancelled.delete()
+
         if Enrollment.objects.filter(user=request.user, program=program).exists():
             raise ConflictError('User already enrolled in this program.')
 
@@ -366,6 +408,11 @@ class EnrollmentListCreateView(APIView):
             program=program,
             payment_type=payment_type,
             total_amount=total_amount,
+            installment_config_snapshot={
+                'num_installments': program.num_installments,
+                'degrees_per_installment': program.degrees_per_installment,
+                'completion_threshold': program.completion_threshold,
+            },
         )
 
         # Record promo code redemption if used
@@ -431,6 +478,38 @@ class EnrollmentDetailView(APIView):
         return Response(serializer.data)
 
 
+class EnrollmentPendingPaymentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, enrollment_id):
+        from apps.enrollments.utils import check_and_expire_payment
+        from datetime import timedelta
+
+        payment = Payment.objects.filter(
+            enrollment_id=enrollment_id,
+            enrollment__user=request.user,
+            status='pending'
+        ).order_by('-created_at').first()
+
+        if not payment:
+            return Response({'detail': 'No pending payment'}, status=404)
+
+        payment = check_and_expire_payment(payment)
+        if payment.status != 'pending':
+            return Response({'detail': 'No pending payment'}, status=404)
+
+        expiry_minutes = getattr(settings, 'PAYMENT_EXPIRY_MINUTES', 15)
+        return Response({
+            'paymentId': payment.id,
+            'paymentUrl': payment.payment_url or None,
+            'amount': payment.amount,
+            'method': payment.method,
+            'status': payment.status,
+            'createdAt': payment.created_at,
+            'expiresAt': payment.created_at + timedelta(minutes=expiry_minutes),
+        })
+
+
 class PaymentInitiateView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [PaymentThrottle]
@@ -494,8 +573,8 @@ class PaymentInitiateView(APIView):
 
         enrollment_id = serializer.validated_data['enrollmentId']
         amount = serializer.validated_data['amount']
-        method = serializer.validated_data['method']
-        phone = serializer.validated_data['phone']
+        method = serializer.validated_data.get('method', 'orangeMoney')
+        phone = serializer.validated_data.get('phone', '') or request.user.phone or ''
 
         try:
             enrollment = Enrollment.objects.get(id=enrollment_id)
@@ -513,7 +592,9 @@ class PaymentInitiateView(APIView):
         if enrollment.payment_type == 'full':
             expected = enrollment.total_amount
         elif enrollment.amount_paid == 0:
-            expected = math.ceil(enrollment.total_amount / 2)
+            snapshot = enrollment.installment_config_snapshot or {}
+            num_inst = snapshot.get('num_installments') or enrollment.program.num_installments or 2
+            expected = math.ceil(enrollment.total_amount / num_inst)
         else:
             expected = remaining
 
@@ -524,12 +605,13 @@ class PaymentInitiateView(APIView):
             )
 
         # Auto-expire stale pending payments
-        cutoff = timezone.now() - timedelta(minutes=settings.PAYMENT_EXPIRY_MINUTES)
-        Payment.objects.filter(
+        from apps.enrollments.utils import check_and_expire_payment
+        pending_payments = Payment.objects.filter(
             enrollment=enrollment,
             status='pending',
-            created_at__lt=cutoff,
-        ).update(status='expired')
+        )
+        for p in pending_payments:
+            check_and_expire_payment(p)
 
         # Check for non-stale pending payments
         if Payment.objects.filter(enrollment=enrollment, status='pending').exists():
@@ -554,8 +636,9 @@ class PaymentInitiateView(APIView):
                 }
             }, status=status.HTTP_502_BAD_GATEWAY)
 
-        payment.mf_transaction_id = mf_result['transactionId']
-        payment.save()
+        payment.mf_transaction_id = mf_result.get('transactionId', '')
+        payment.payment_url = mf_result.get('paymentUrl', '') or ''
+        payment.save(update_fields=['mf_transaction_id', 'payment_url', 'updated_at'])
 
         expires_at = timezone.now() + timedelta(minutes=settings.PAYMENT_EXPIRY_MINUTES)
 
@@ -592,6 +675,8 @@ class PaymentStatusView(APIView):
         },
     )
     def get(self, request, payment_id):
+        from apps.enrollments.utils import check_and_expire_payment
+
         try:
             payment = Payment.objects.select_related('enrollment').get(id=payment_id)
         except Payment.DoesNotExist:
@@ -599,6 +684,8 @@ class PaymentStatusView(APIView):
 
         if payment.enrollment.user_id != request.user.id:
             raise ForbiddenError('Payment belongs to another user.')
+
+        payment = check_and_expire_payment(payment)
 
         serializer = PaymentStatusSerializer(payment)
         return Response(serializer.data)
@@ -696,6 +783,8 @@ class PaymentVerifyView(APIView):
         },
     )
     def get(self, request):
+        from apps.enrollments.utils import check_and_expire_payment
+
         token = request.query_params.get('token')
         if not token:
             raise ValidationError(
@@ -707,6 +796,8 @@ class PaymentVerifyView(APIView):
         payment = Payment.objects.filter(mf_transaction_id=token).select_related('enrollment', 'enrollment__program').first()
         if not payment:
             raise NotFoundError('Payment not found for this token.')
+
+        payment = check_and_expire_payment(payment)
 
         # If still pending, verify with MoneyFusion API
         if payment.status == 'pending':
@@ -777,12 +868,15 @@ class PaymentWebhookView(APIView):
     )
     def post(self, request):
         data = request.data
+        logger.info('Webhook raw payload: %s', data)
+
+        # MoneyFusion may send tokenPay at different nesting levels
         mf_data = data.get('data', {})
-        token = mf_data.get('tokenPay', '')
-        mf_status = mf_data.get('statut', '')
+        token = mf_data.get('tokenPay', '') or data.get('tokenPay', '')
+        mf_status = mf_data.get('statut', '') or data.get('statut', '')
 
         if not token:
-            logger.warning('Webhook received with no tokenPay')
+            logger.warning('Webhook received with no tokenPay. Keys: %s', list(data.keys()))
             return Response({'received': True})
 
         # Find payment by MoneyFusion token
@@ -960,17 +1054,14 @@ class DevPaymentSimulateView(APIView):
 
 
 class PromoCodeGenerateView(APIView):
-    """Generate a promo code. Requires user to have at least one completed enrollment."""
+    """Generate a promo code. Admin only."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        # Check eligibility: must have at least one completed enrollment
-        has_completed = Enrollment.objects.filter(
-            user=request.user, payment_status='completed'
-        ).exists()
-        if not has_completed:
+        # Only admins can generate promo codes
+        if request.user.role != 'admin':
             return Response(
-                {'error': 'You must complete at least one enrollment to generate promo codes.'},
+                {'error': 'Only administrators can generate promo codes.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -1026,3 +1117,159 @@ class PromoCodeListView(APIView):
     def get(self, request):
         codes = PromoCode.objects.filter(creator=request.user).order_by('-created_at')
         return Response(PromoCodeSerializer(codes, many=True).data)
+
+
+_MONTHS_FR = [
+    "Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
+    "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre",
+]
+
+
+class AttestationView(APIView):
+    """Generate and stream a personalised PDF attestation for a completed enrollment."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, enrollment_id):
+        import io as _io
+        import logging
+        from django.http import FileResponse
+        from docxtpl import DocxTemplate
+        from apps.progress.models import QCMAttempt
+        from django.db.models import Max
+        from minio import Minio
+
+        logger = logging.getLogger(__name__)
+
+        # 1. Fetch + authorisation
+        try:
+            enrollment = Enrollment.objects.select_related('user', 'program').get(id=enrollment_id)
+        except Enrollment.DoesNotExist:
+            return Response({'error': 'Inscription introuvable'}, status=404)
+
+        if enrollment.user != request.user and not request.user.is_staff:
+            return Response({'error': 'Accès interdit'}, status=403)
+
+        if not enrollment.all_degrees_completed():
+            return Response({'error': 'Programme non terminé'}, status=403)
+
+        program = enrollment.program
+        user = enrollment.user
+
+        # 2. participant_name
+        participant_name = f"{user.first_name} {user.last_name}".strip() or user.phone
+
+        # 3. duration
+        w = program.duration_weeks
+        duration = f"{w // 4} mois" if w % 4 == 0 else f"{w} semaines"
+
+        # 4. date + year
+        today = date.today()
+        date_str = f"{today.day:02d} {_MONTHS_FR[today.month - 1]} {today.year}"
+        year = str(today.year)
+
+        # 5. mention — best score per QCM asset averaged across the program
+        scores_qs = (
+            QCMAttempt.objects
+            .filter(user=user, asset__step__degree__program=program)
+            .values('asset_id')
+            .annotate(best=Max('score'))
+        )
+        scores = list(scores_qs)
+        if scores:
+            avg = sum(float(s['best']) for s in scores) / len(scores)
+            if avg >= 90:
+                mention = "EXCELLENT"
+            elif avg >= 80:
+                mention = "TRÈS BIEN"
+            else:
+                mention = "BIEN"
+        else:
+            mention = "BIEN"
+
+        # 6. modules — admin-defined text or fallback from degrees/steps
+        if program.modules_text:
+            modules = program.modules_text
+        else:
+            parts = []
+            for degree in program.degrees.order_by('order_index').prefetch_related('steps'):
+                step_titles = " - ".join(
+                    s.title for s in degree.steps.order_by('order_index')
+                )
+                parts.append(
+                    f"{degree.title} : {step_titles}" if step_titles else degree.title
+                )
+            modules = " | ".join(parts)
+
+        # 7. Render DOCX template
+        template_path = os.path.join(
+            settings.BASE_DIR, 'apps', 'content', 'attestation_template_FINAL.docx'
+        )
+        tpl = DocxTemplate(template_path)
+        tpl.render({
+            'participant_name': participant_name,
+            'program_name': program.name,
+            'duration': duration,
+            'year': year,
+            'date': date_str,
+            'mention': mention,
+            'modules': modules,
+        })
+
+        # 8. Write DOCX to /tmp, convert to PDF via LibreOffice
+        with tempfile.NamedTemporaryFile(suffix='.docx', delete=False, dir='/tmp') as f:
+            docx_path = f.name
+        tpl.save(docx_path)
+
+        subprocess.run(
+            ['libreoffice', '--headless', '--convert-to', 'pdf', '--outdir', '/tmp', docx_path],
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
+        pdf_path = docx_path.replace('.docx', '.pdf')
+
+        # 9. Upload to MinIO (documents bucket) — best-effort, non-fatal
+        try:
+            pdf_bytes = open(pdf_path, 'rb').read()
+            minio_endpoint = (
+                f"{settings.MINIO_ENDPOINT}:{settings.MINIO_PORT}"
+                if settings.MINIO_PORT not in (80, 443)
+                else settings.MINIO_ENDPOINT
+            )
+            minio_client = Minio(
+                minio_endpoint,
+                access_key=settings.MINIO_ACCESS_KEY,
+                secret_key=settings.MINIO_SECRET_KEY,
+                secure=settings.MINIO_USE_SSL,
+            )
+            minio_key = f"attestations/{enrollment_id}.pdf"
+            minio_client.put_object(
+                settings.MINIO_DOCUMENT_BUCKET,
+                minio_key,
+                _io.BytesIO(pdf_bytes),
+                length=len(pdf_bytes),
+                content_type='application/pdf',
+            )
+            logger.info("Attestation uploaded to MinIO: %s/%s", settings.MINIO_DOCUMENT_BUCKET, minio_key)
+        except Exception as exc:
+            logger.warning("MinIO upload failed for attestation %s: %s", enrollment_id, exc)
+
+        # 10. Stream PDF then clean up temp files in background
+        def _cleanup():
+            import time
+            time.sleep(10)
+            for p in (docx_path, pdf_path):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+
+        threading.Thread(target=_cleanup, daemon=True).start()
+
+        safe_name = enrollment_id.replace('/', '_')
+        return FileResponse(
+            open(pdf_path, 'rb'),
+            content_type='application/pdf',
+            as_attachment=True,
+            filename=f"attestation_{safe_name}.pdf",
+        )

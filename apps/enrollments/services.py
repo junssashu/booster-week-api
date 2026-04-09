@@ -25,9 +25,11 @@ class MoneyFusionService:
 
     @staticmethod
     def _get_client():
-        """Get a configured PaymentClient instance."""
+        """Get a configured PaymentClient instance with 10s timeout."""
         from apiMoneyFusion import PaymentClient
-        return PaymentClient(api_key_url=settings.MONEYFUSION_BASE_URL)
+        client = PaymentClient(api_key_url=settings.MONEYFUSION_BASE_URL)
+        client.session.timeout = 10
+        return client
 
     @staticmethod
     def initiate_payment(payment, phone):

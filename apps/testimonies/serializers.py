@@ -1,12 +1,13 @@
 from rest_framework import serializers
 
+from apps.core.storage import resolve_url
 from .models import Testimony, TestimonyComment
 
 
 class TestimonySerializer(serializers.ModelSerializer):
     authorId = serializers.CharField(source='author_id')
     authorName = serializers.SerializerMethodField()
-    videoUrl = serializers.CharField(source='video_url', required=False, allow_null=True, allow_blank=True)
+    videoUrl = serializers.SerializerMethodField()
     likeCount = serializers.IntegerField(source='like_count')
     commentCount = serializers.IntegerField(source='comment_count')
     createdAt = serializers.DateTimeField(source='created_at')
@@ -19,6 +20,11 @@ class TestimonySerializer(serializers.ModelSerializer):
 
     def get_authorName(self, obj):
         return f'{obj.author.first_name} {obj.author.last_name}'
+
+    def get_videoUrl(self, obj):
+        if not obj.video_url:
+            return None
+        return resolve_url(obj.video_url)
 
     def get_userHasLiked(self, obj):
         user = self.context.get('user')

@@ -20,6 +20,13 @@ class Enrollment(models.Model):
     amount_paid = models.IntegerField(default=0)
     total_amount = models.IntegerField()
     enrollment_date = models.DateTimeField(auto_now_add=True)
+    installment_config_snapshot = models.JSONField(default=dict, blank=True)
+    mandataire = models.ForeignKey(
+        'accounts.User',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='mandated_enrollments',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -49,19 +56,34 @@ class Enrollment(models.Model):
         """Check if a degree is accessible and return (accessible, lock_reason).
 
         lock_reason is one of: 'payment', 'completion', or None (accessible).
+        Uses installment_config_snapshot if available to prevent admin config
+        changes from breaking existing enrollments.
         """
         # Payment checks
         if self.payment_status == 'pending':
             return False, 'payment'
 
         if self.payment_status != 'completed' and self.payment_type != 'full':
-            # Installment with partial payment: only first half of degrees
+            # Installment with partial payment: determine which degrees are unlocked
+            snapshot = self.installment_config_snapshot or {}
             total_degrees = self.program.degrees.count()
-            cutoff = math.ceil(total_degrees / 2)
+            dpi = snapshot.get('degrees_per_installment') or self.program.degrees_per_installment  # e.g. [2, 1]
+            num_inst = snapshot.get('num_installments') or self.program.num_installments or 2
+
+            if dpi and isinstance(dpi, list) and len(dpi) > 0:
+                # Custom mapping: sum of first installment(s) paid determines cutoff
+                # For partial payment, only 1st installment is paid
+                cutoff = dpi[0] if len(dpi) > 0 else math.ceil(total_degrees / 2)
+            else:
+                # Default: split evenly across installments
+                cutoff = math.ceil(total_degrees / num_inst)
+
             if degree.order_index >= cutoff:
                 return False, 'payment'
 
-        # Completion check: all steps of all previous degrees must average >= 70%
+        # Completion check: configurable threshold (default 70%)
+        snapshot = self.installment_config_snapshot or {}
+        threshold = snapshot.get('completion_threshold') or self.program.completion_threshold or 70
         if degree.order_index > 0:
             from apps.programs.models import Degree as DegreeModel
             from apps.progress.models import StepProgress
@@ -82,7 +104,7 @@ class Enrollment(models.Model):
                 )
                 total_pct = sum(progress_records.get(step.id, 0) for step in steps)
                 avg = total_pct / total_steps
-                if avg < 70:
+                if avg < threshold:
                     return False, 'completion'
 
         return True, None
@@ -90,8 +112,38 @@ class Enrollment(models.Model):
     @property
     def installment_amount(self):
         if self.payment_type == 'installment':
-            return math.ceil(self.total_amount / 2)
+            num_inst = self.program.num_installments or 2
+            return math.ceil(self.total_amount / num_inst)
         return None
+
+    def all_degrees_completed(self):
+        """Check if all degrees have >= threshold avg step completion."""
+        from apps.progress.models import StepProgress
+        threshold = self.program.completion_threshold or 70
+        for degree in self.program.degrees.all():
+            steps = list(degree.steps.all())
+            if not steps:
+                continue
+            total = 0
+            for s in steps:
+                sp = StepProgress.objects.filter(user=self.user, step=s).first()
+                total += (sp.completion_percentage if sp else 0)
+            if total / len(steps) < threshold:
+                return False
+        return True
+
+    def get_next_unlocked(self):
+        """Return (next_degree, next_step) the user should work on."""
+        from apps.progress.models import StepProgress
+        for degree in self.program.degrees.order_by('order_index'):
+            can_access, _ = self.can_access_degree_detail(degree)
+            if not can_access:
+                return (None, None)
+            for step in degree.steps.order_by('order_index'):
+                sp = StepProgress.objects.filter(user=self.user, step=step).first()
+                if not sp or sp.completion_percentage < 70:
+                    return (degree, step)
+        return (None, None)
 
     def __str__(self):
         return f'{self.user} → {self.program} ({self.payment_status})'
@@ -106,6 +158,7 @@ class Payment(models.Model):
     date = models.DateTimeField(auto_now_add=True)
     transaction_ref = models.CharField(max_length=255, null=True, blank=True)
     mf_transaction_id = models.CharField(max_length=255, null=True, blank=True)
+    payment_url = models.URLField(max_length=500, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -116,6 +169,7 @@ class Payment(models.Model):
             models.Index(fields=['transaction_ref']),
             models.Index(fields=['mf_transaction_id']),
             models.Index(fields=['status']),
+            models.Index(fields=['created_at']),
         ]
 
     def save(self, *args, **kwargs):
