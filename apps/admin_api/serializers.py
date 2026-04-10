@@ -413,6 +413,7 @@ class AdminSessionSerializer(serializers.ModelSerializer):
     thumbnailUrl = serializers.CharField(
         source='thumbnail_url', allow_null=True, required=False,
     )
+    programId = serializers.CharField(source='program_id', allow_null=True, required=False)
     attendanceCount = serializers.IntegerField(source='attendance_count', read_only=True)
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
@@ -421,7 +422,7 @@ class AdminSessionSerializer(serializers.ModelSerializer):
         model = LiveReplaySession
         fields = [
             'id', 'title', 'description', 'externalUrl', 'date',
-            'durationMinutes', 'isLive', 'thumbnailUrl',
+            'durationMinutes', 'isLive', 'thumbnailUrl', 'programId',
             'attendanceCount', 'createdAt', 'updatedAt',
         ]
         read_only_fields = ['id', 'attendanceCount', 'createdAt', 'updatedAt']
@@ -433,6 +434,7 @@ class AdminSessionSerializer(serializers.ModelSerializer):
                 'durationMinutes': 'durationMinutes',
                 'isLive': 'isLive',
                 'thumbnailUrl': 'thumbnailUrl',
+                'programId': 'programId',
             })
         )
 

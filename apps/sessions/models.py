@@ -12,6 +12,12 @@ class LiveReplaySession(models.Model):
     duration_minutes = models.IntegerField()
     is_live = models.BooleanField()
     thumbnail_url = models.TextField(null=True, blank=True)
+    program = models.ForeignKey(
+        'programs.Program',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='sessions',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

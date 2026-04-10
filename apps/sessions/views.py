@@ -1,3 +1,4 @@
+from django.db.models import Q
 from drf_spectacular.utils import extend_schema, inline_serializer, OpenApiExample, OpenApiParameter
 from rest_framework import serializers as drf_serializers
 from rest_framework.permissions import AllowAny
@@ -89,6 +90,24 @@ class SessionListView(APIView):
         if is_live is not None:
             qs = qs.filter(is_live=is_live.lower() == 'true')
 
+        # Filter out program-restricted sessions the user doesn't have access to
+        user = request.user
+        if user and user.is_authenticated:
+            from apps.enrollments.models import Enrollment
+            enrolled_program_ids = set(
+                Enrollment.objects.filter(
+                    user=user,
+                    payment_status__in=['partial', 'completed']
+                ).values_list('program_id', flat=True)
+            )
+            # Keep: sessions with no program OR sessions whose program the user is enrolled in
+            qs = qs.filter(
+                Q(program__isnull=True) | Q(program_id__in=enrolled_program_ids)
+            )
+        else:
+            # Unauthenticated: only show sessions with no program restriction
+            qs = qs.filter(program__isnull=True)
+
         sort = request.query_params.get('sort', 'date')
         order = request.query_params.get('order', 'desc')
         sort_map = {'date': 'date'}
@@ -142,6 +161,26 @@ class SessionDetailView(APIView):
             session = LiveReplaySession.objects.prefetch_related('attendances').get(id=session_id)
         except LiveReplaySession.DoesNotExist:
             raise NotFoundError('Session does not exist.')
+
+        # If session is restricted to a program, check enrollment
+        if session.program_id:
+            user = request.user
+            if not user or not user.is_authenticated:
+                return Response(
+                    {'error': {'code': 'FORBIDDEN', 'message': 'This session is restricted to enrolled students.'}},
+                    status=403,
+                )
+            from apps.enrollments.models import Enrollment
+            is_enrolled = Enrollment.objects.filter(
+                user=user,
+                program_id=session.program_id,
+                payment_status__in=['partial', 'completed'],
+            ).exists()
+            if not is_enrolled:
+                return Response(
+                    {'error': {'code': 'FORBIDDEN', 'message': 'This session is restricted to enrolled students.'}},
+                    status=403,
+                )
 
         serializer = SessionSerializer(session, context={'user': request.user})
         return Response(serializer.data)

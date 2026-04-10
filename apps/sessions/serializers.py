@@ -8,14 +8,15 @@ class SessionSerializer(serializers.ModelSerializer):
     durationMinutes = serializers.IntegerField(source='duration_minutes')
     isLive = serializers.BooleanField(source='is_live')
     thumbnailUrl = serializers.CharField(source='thumbnail_url', allow_null=True)
+    programId = serializers.CharField(source='program_id', allow_null=True, read_only=True)
     hasJoined = serializers.SerializerMethodField()
     attendeeCount = serializers.SerializerMethodField()
 
     class Meta:
         model = LiveReplaySession
         fields = ['id', 'title', 'description', 'externalUrl', 'date',
-                  'durationMinutes', 'isLive', 'thumbnailUrl', 'hasJoined',
-                  'attendeeCount']
+                  'durationMinutes', 'isLive', 'thumbnailUrl', 'programId',
+                  'hasJoined', 'attendeeCount']
 
     def get_hasJoined(self, obj):
         user = self.context.get('user')
