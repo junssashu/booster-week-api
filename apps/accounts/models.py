@@ -33,7 +33,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     city = models.CharField(max_length=100, null=True, blank=True)
     country = models.CharField(max_length=100, null=True, blank=True)
     avatar_url = models.TextField(null=True, blank=True)
-    role = models.CharField(max_length=20, default='user')
+    ROLE_CHOICES = [
+        ('user', 'User'),
+        ('admin', 'Admin'),
+        ('admin_assistant', 'Admin Assistant'),
+    ]
+    role = models.CharField(max_length=20, default='user', choices=ROLE_CHOICES)
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)

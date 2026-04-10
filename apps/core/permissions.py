@@ -15,3 +15,38 @@ class IsAdmin(BasePermission):
 
     def has_permission(self, request, view):
         return request.user and request.user.is_authenticated and request.user.role == 'admin'
+
+
+class IsAdminOrAssistant(BasePermission):
+    """Check that the requesting user has admin or admin_assistant role."""
+
+    def has_permission(self, request, view):
+        return (
+            request.user
+            and request.user.is_authenticated
+            and request.user.role in ('admin', 'admin_assistant')
+        )
+
+
+class IsAdminOnly(BasePermission):
+    """Restrict access to admin role only (not admin_assistant)."""
+
+    def has_permission(self, request, view):
+        return request.user and request.user.is_authenticated and request.user.role == 'admin'
+
+
+class IsAdminOrAssistantReadOnly(BasePermission):
+    """
+    Admin has full access.
+    Admin assistant has read-only access (GET/HEAD/OPTIONS only).
+    """
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        role = request.user.role
+        if role == 'admin':
+            return True
+        if role == 'admin_assistant':
+            return request.method in ('GET', 'HEAD', 'OPTIONS')
+        return False

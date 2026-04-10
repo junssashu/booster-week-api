@@ -4,7 +4,7 @@ from rest_framework import viewsets
 
 logger = logging.getLogger(__name__)
 
-from apps.core.permissions import IsAdmin
+from apps.core.permissions import IsAdminOrAssistant, IsAdminOnly, IsAdminOrAssistantReadOnly
 from apps.programs.models import (
     Program, Degree, Step, Asset, QCMQuestion, FormFieldDef,
     DegreeFile, PriseDeContact, PriseDeContactAsset,
@@ -20,7 +20,7 @@ from .serializers import (
 
 class AdminProgramViewSet(viewsets.ModelViewSet):
     serializer_class = AdminProgramSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistantReadOnly]
     queryset = Program.objects.all().order_by('-created_at')
 
     def get_serializer_class(self):
@@ -31,7 +31,7 @@ class AdminProgramViewSet(viewsets.ModelViewSet):
 
 class AdminDegreeViewSet(viewsets.ModelViewSet):
     serializer_class = AdminDegreeSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
@@ -58,7 +58,7 @@ class AdminDegreeViewSet(viewsets.ModelViewSet):
 
 class AdminStepViewSet(viewsets.ModelViewSet):
     serializer_class = AdminStepSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
@@ -84,7 +84,7 @@ class AdminStepViewSet(viewsets.ModelViewSet):
 
 class AdminAssetViewSet(viewsets.ModelViewSet):
     serializer_class = AdminAssetSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get_queryset(self):
         qs = Asset.objects.all().order_by('order_index')
@@ -137,7 +137,7 @@ class AdminAssetViewSet(viewsets.ModelViewSet):
 
 class AdminQCMQuestionViewSet(viewsets.ModelViewSet):
     serializer_class = AdminQCMQuestionSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get_queryset(self):
         qs = QCMQuestion.objects.all().order_by('order_index')
@@ -149,7 +149,7 @@ class AdminQCMQuestionViewSet(viewsets.ModelViewSet):
 
 class AdminFormFieldViewSet(viewsets.ModelViewSet):
     serializer_class = AdminFormFieldSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get_queryset(self):
         qs = FormFieldDef.objects.all().order_by('order_index')
@@ -161,7 +161,7 @@ class AdminFormFieldViewSet(viewsets.ModelViewSet):
 
 class AdminDegreeFileViewSet(viewsets.ModelViewSet):
     serializer_class = AdminDegreeFileSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get_queryset(self):
         qs = DegreeFile.objects.all().order_by('order_index')
@@ -173,7 +173,7 @@ class AdminDegreeFileViewSet(viewsets.ModelViewSet):
 
 class AdminPriseDeContactViewSet(viewsets.ModelViewSet):
     serializer_class = AdminPriseDeContactSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get_queryset(self):
         qs = PriseDeContact.objects.all().order_by('order_index')
@@ -191,7 +191,7 @@ class AdminPriseDeContactViewSet(viewsets.ModelViewSet):
 
 class AdminPdcAssetViewSet(viewsets.ModelViewSet):
     serializer_class = AdminPdcAssetSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get_queryset(self):
         qs = PriseDeContactAsset.objects.all().order_by('order_index')
@@ -235,7 +235,7 @@ from .serializers import (
 
 class AdminSessionViewSet(viewsets.ModelViewSet):
     serializer_class = AdminSessionSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
     queryset = LiveReplaySession.objects.all().order_by('-date')
 
     def get_queryset(self):
@@ -274,7 +274,7 @@ class AdminUserViewSet(
     viewsets.GenericViewSet,
 ):
     serializer_class = AdminUserSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get_queryset(self):
         qs = User.objects.all().order_by('-created_at')
@@ -338,7 +338,7 @@ class AdminUserViewSet(
 
 class AdminEnrollmentViewSet(viewsets.ModelViewSet):
     queryset = Enrollment.objects.select_related('user', 'program', 'mandataire').order_by('-created_at')
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistantReadOnly]
 
     def get_serializer_class(self):
         if self.action in ('create', 'partial_update', 'update'):
@@ -414,7 +414,7 @@ class AdminPaymentViewSet(
     viewsets.GenericViewSet,
 ):
     serializer_class = AdminPaymentSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get_queryset(self):
         qs = Payment.objects.select_related(
@@ -435,7 +435,7 @@ class AdminPaymentViewSet(
 
 class AdminTestimonyViewSet(viewsets.ModelViewSet):
     serializer_class = AdminTestimonySerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
     queryset = Testimony.objects.select_related('author').prefetch_related('comments__author').order_by('-created_at')
 
 
@@ -450,7 +450,7 @@ class AdminTestimonyCommentViewSet(
 ):
     queryset = TestimonyComment.objects.select_related('author', 'testimony').order_by('-created_at')
     serializer_class = AdminTestimonyCommentSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -472,7 +472,7 @@ class AdminTestimonyCommentViewSet(
 
 class AdminFAQViewSet(viewsets.ModelViewSet):
     serializer_class = AdminFAQSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
     queryset = FAQItem.objects.all().order_by('order_index')
 
 
@@ -481,7 +481,7 @@ class AdminFAQViewSet(viewsets.ModelViewSet):
 # ---------------------------------------------------------------------------
 
 class AdminContactInfoView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get(self, request):
         info, _created = ContactInfo.objects.get_or_create(id=1, defaults={
@@ -515,7 +515,7 @@ class AdminContactSubmissionViewSet(
     viewsets.GenericViewSet,
 ):
     serializer_class = AdminContactSubmissionSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
     queryset = ContactSubmission.objects.all().order_by('-created_at')
 
 
@@ -526,7 +526,7 @@ class AdminContactSubmissionViewSet(
 class AdminPromoCodeViewSet(viewsets.ModelViewSet):
     queryset = PromoCode.objects.select_related('creator').order_by('-created_at')
     serializer_class = AdminPromoCodeSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOnly]
 
     def perform_create(self, serializer):
         serializer.save(creator=self.request.user)
@@ -537,7 +537,7 @@ class AdminPromoCodeViewSet(viewsets.ModelViewSet):
 # ---------------------------------------------------------------------------
 
 class AdminAppSettingsView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOnly]
 
     def get(self, request):
         settings, _ = AppSettings.objects.get_or_create(id=1)
@@ -582,7 +582,7 @@ def _get_minio_client():
 
 
 class AdminFileUploadView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
     parser_classes = [MultiPartParser, FormParser]
 
     ALLOWED_TYPES = {
@@ -649,7 +649,7 @@ from datetime import timedelta
 
 
 class AdminStatsOverviewView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get(self, request):
         from apps.programs.models import Program as ProgramModel
@@ -669,7 +669,7 @@ class AdminStatsOverviewView(APIView):
 
 
 class AdminEnrollmentTrendsView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get(self, request):
         days = int(request.query_params.get('days', 30))
@@ -691,7 +691,7 @@ class AdminEnrollmentTrendsView(APIView):
 
 
 class AdminRevenueTrendsView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get(self, request):
         days = int(request.query_params.get('days', 30))
@@ -713,7 +713,7 @@ class AdminRevenueTrendsView(APIView):
 
 
 class AdminCompletionStatsView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get(self, request):
         from apps.programs.models import Program as ProgramModel
@@ -745,7 +745,7 @@ from apps.progress.models import StepProgress, QCMAttempt, FormSubmission
 
 
 class AdminUserProgressView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get(self, request, user_id):
         program_id = request.query_params.get('programId')
@@ -784,7 +784,7 @@ class AdminUserProgressView(APIView):
 
 
 class AdminProgressStatsView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get(self, request):
         program_id = request.query_params.get('programId')
@@ -824,7 +824,7 @@ class AdminProgressStatsView(APIView):
 
 
 class AdminProgressExportView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]
 
     def get(self, request):
         import csv
