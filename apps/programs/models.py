@@ -30,6 +30,10 @@ class Program(models.Model):
         null=True, blank=True,
         help_text='List of teaser videos/audios shown on programme detail page. Format: [{type, title, description, url}]'
     )
+    enrollment_form_asset_id = models.CharField(
+        max_length=50, null=True, blank=True,
+        help_text='Asset ID of the form shown before payment during enrollment. If set, students must fill this form before proceeding to payment.'
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

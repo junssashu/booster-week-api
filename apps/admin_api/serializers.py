@@ -45,6 +45,9 @@ class AdminProgramSerializer(serializers.ModelSerializer):
     previewAssets = serializers.JSONField(
         source='preview_assets', allow_null=True, required=False
     )
+    enrollmentFormAssetId = serializers.CharField(
+        source='enrollment_form_asset_id', allow_null=True, required=False, allow_blank=True
+    )
     degreeCount = serializers.SerializerMethodField(read_only=True)
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
@@ -56,7 +59,7 @@ class AdminProgramSerializer(serializers.ModelSerializer):
             'durationWeeks', 'presentationVideoUrl', 'isActive',
             'numInstallments', 'degreesPerInstallment', 'completionThreshold',
             'whatsappCommunityUrl', 'promotionDetails', 'modulesText',
-            'previewAssets', 'degreeCount', 'createdAt', 'updatedAt',
+            'previewAssets', 'enrollmentFormAssetId', 'degreeCount', 'createdAt', 'updatedAt',
         ]
         read_only_fields = ['id', 'createdAt', 'updatedAt']
 

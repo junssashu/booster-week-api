@@ -89,12 +89,15 @@ class ProgramDetailSerializer(serializers.ModelSerializer):
     previewAssets = serializers.JSONField(
         source='preview_assets', allow_null=True, required=False
     )
+    enrollmentFormAssetId = serializers.CharField(
+        source='enrollment_form_asset_id', allow_null=True, required=False
+    )
 
     class Meta:
         model = Program
         fields = ['id', 'name', 'description', 'imageUrl', 'price',
                   'durationWeeks', 'numInstallments', 'presentationVideoUrl', 'degreeCount', 'degrees', 'createdAt',
-                  'priseDeContact', 'whatsappCommunityUrl', 'promotionDetails', 'previewAssets']
+                  'priseDeContact', 'whatsappCommunityUrl', 'promotionDetails', 'previewAssets', 'enrollmentFormAssetId']
 
     def get_imageUrl(self, obj):
         return resolve_url(obj.image_url) if obj.image_url else None
