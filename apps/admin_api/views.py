@@ -240,7 +240,7 @@ class AdminSessionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset().annotate(attendance_count=Count('attendances'))
-        program_id = self.request.query_params.get('program_id')
+        program_id = self.request.query_params.get('programId')
         if program_id:
             qs = qs.filter(program_id=program_id)
         return qs
