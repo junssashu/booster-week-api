@@ -239,7 +239,11 @@ class AdminSessionViewSet(viewsets.ModelViewSet):
     queryset = LiveReplaySession.objects.all().order_by('-date')
 
     def get_queryset(self):
-        return super().get_queryset().annotate(attendance_count=Count('attendances'))
+        qs = super().get_queryset().annotate(attendance_count=Count('attendances'))
+        program_id = self.request.query_params.get('program_id')
+        if program_id:
+            qs = qs.filter(program_id=program_id)
+        return qs
 
     @action(detail=True, methods=['get'], url_path='attendance')
     def attendance(self, request, pk=None):
