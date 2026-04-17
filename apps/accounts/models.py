@@ -41,6 +41,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     role = models.CharField(max_length=20, default='user', choices=ROLE_CHOICES)
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
+    is_mandataire = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
