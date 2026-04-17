@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from apps.accounts.models import User
 from apps.enrollments.models import Enrollment
 from apps.sessions.models import SessionAttendance
 from ._helpers import _map_camel_to_snake
@@ -39,8 +40,7 @@ class AdminEnrollmentWriteSerializer(serializers.ModelSerializer):
     def validate_mandataireId(self, value):
         if value in (None, ''):
             return value
-        from apps.accounts.models import User as UserModel
-        if not UserModel.objects.filter(id=value, is_mandataire=True).exists():
+        if not User.objects.filter(id=value, is_mandataire=True).exists():
             raise serializers.ValidationError('User is not a designated mandataire.')
         return value
 

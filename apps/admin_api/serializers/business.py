@@ -40,12 +40,14 @@ class AdminMandataireSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_programs(self, obj):
-        return list(
-            obj.mandated_enrollments
-            .select_related('program')
-            .values_list('program__name', flat=True)
-            .distinct()
-        )
+        seen: set[str] = set()
+        result: list[str] = []
+        for enr in obj.mandated_enrollments.all():
+            name = enr.program.name if enr.program else None
+            if name and name not in seen:
+                seen.add(name)
+                result.append(name)
+        return result
 
 
 class AdminEnrollmentSerializer(serializers.ModelSerializer):
