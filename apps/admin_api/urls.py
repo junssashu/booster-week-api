@@ -35,4 +35,5 @@ urlpatterns = [
     path('users/<str:user_id>/progress/', views.AdminUserProgressView.as_view(), name='admin-user-progress'),
     path('stats/progress/', views.AdminProgressStatsView.as_view(), name='admin-progress-stats'),
     path('stats/progress/export/', views.AdminProgressExportView.as_view(), name='admin-progress-export'),
+    path('mandataires/', views.AdminMandataireListView.as_view(), name='admin-mandataires'),
 ]
