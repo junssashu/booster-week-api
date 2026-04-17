@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema, OpenApiExample
 
+from apps.accounts.models import User as UserModel
 from apps.core.exceptions import ConflictError, NotFoundError, ValidationError
 from apps.programs.models import Program
 
@@ -108,7 +109,6 @@ class EnrollmentListCreateView(APIView):
         # Handle optional mandataire
         mandataire_id = (serializer.validated_data.get('mandataireId') or '').strip() or None
         if mandataire_id:
-            from apps.accounts.models import User as UserModel
             if not UserModel.objects.filter(id=mandataire_id, is_mandataire=True).exists():
                 raise ValidationError(
                     'Mandataire invalide.',
