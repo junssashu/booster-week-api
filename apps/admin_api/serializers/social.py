@@ -101,6 +101,12 @@ class AdminFormSubmissionSerializer(serializers.ModelSerializer):
         fields = ['id', 'assetTitle', 'responses', 'submittedAt']
 
 
+def _full_name(user):
+    return f'{user.first_name} {user.last_name}'.strip()
+
+
+# Requires context: {'enrollment_asset_ids': set[str]} — set of asset IDs that are enrollment forms.
+# Missing context causes all submissions to be typed as 'in-course'.
 class AdminFormSubmissionRowSerializer(serializers.ModelSerializer):
     submittedAt = serializers.DateTimeField(source='submitted_at', read_only=True)
     userName = serializers.SerializerMethodField()
@@ -116,7 +122,7 @@ class AdminFormSubmissionRowSerializer(serializers.ModelSerializer):
                   'programTitle', 'formTitle', 'responseCount']
 
     def get_userName(self, obj):
-        return f'{obj.user.first_name} {obj.user.last_name}'.strip()
+        return _full_name(obj.user)
 
     def get_userPhone(self, obj):
         return obj.user.phone or ''
@@ -148,9 +154,10 @@ class AdminFormSubmissionDetailSerializer(serializers.ModelSerializer):
         fields = ['id', 'submittedAt', 'userName', 'formTitle', 'responses']
 
     def get_userName(self, obj):
-        return f'{obj.user.first_name} {obj.user.last_name}'.strip()
+        return _full_name(obj.user)
 
     def get_responses(self, obj):
+        # Requires prefetch_related('asset__form_fields') on the queryset for N+1 prevention.
         field_map = {
             f.id: f.label
             for f in obj.asset.form_fields.all()
