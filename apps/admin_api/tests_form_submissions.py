@@ -1,4 +1,5 @@
 from django.test import TestCase
+from rest_framework.test import APIClient
 from apps.accounts.models import User
 from apps.programs.models import Program
 from apps.programs.models_assets import Asset, FormFieldDef
@@ -95,3 +96,63 @@ class AdminFormSubmissionDetailSerializerTest(TestCase):
         data = AdminFormSubmissionDetailSerializer(sub2).data
         self.assertEqual(data['responses'][0]['fieldLabel'], 'unknown_field')
         self.assertEqual(data['responses'][0]['value'], 'Some value')
+
+
+class AdminFormSubmissionListViewTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_user(
+            phone='+237600000020', password='pass',
+            first_name='Admin', last_name='User', role='admin',
+        )
+        self.client.force_authenticate(user=self.admin)
+
+        self.program = Program.objects.create(
+            name='Prog View Test',
+            description='Test description',
+            image_url='http://example.com/img.png',
+            price=10000,
+            duration_weeks=4,
+            num_installments=2,
+        )
+        self.asset = Asset.objects.create(title='Form A', type='form', program=self.program)
+        self.program.enrollment_form_asset_id = self.asset.id
+        self.program.save()
+
+        self.student = User.objects.create_user(
+            phone='+237600000021', password='pass',
+            first_name='Bob', last_name='Martin',
+        )
+        FormSubmission.objects.create(
+            id='sub_view001',
+            user=self.student, asset=self.asset,
+            responses=[{'fieldId': 'f1', 'value': 'Oui'}],
+        )
+
+    def test_list_returns_submission(self):
+        response = self.client.get('/api/v1/admin/form-submissions/')
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn('results', data['data'])
+        self.assertEqual(len(data['data']['results']), 1)
+        row = data['data']['results'][0]
+        self.assertEqual(row['type'], 'enrollment')
+        self.assertEqual(row['userName'], 'Bob Martin')
+
+    def test_list_filters_by_type_in_course(self):
+        response = self.client.get('/api/v1/admin/form-submissions/?type=in-course')
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data['data']['results']), 0)
+
+    def test_detail_resolves_field_labels(self):
+        FormFieldDef.objects.create(
+            id='f1', asset=self.asset, label='Votre objectif', type='text',
+            required=True, order_index=0,
+        )
+        sub = FormSubmission.objects.get(id='sub_view001')
+        response = self.client.get(f'/api/v1/admin/form-submissions/{sub.id}/')
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['data']['responses'][0]['fieldLabel'], 'Votre objectif')
+        self.assertEqual(data['data']['responses'][0]['value'], 'Oui')

@@ -2,6 +2,11 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
 from . import views
+from .views_form_submissions import (
+    AdminFormSubmissionListView,
+    AdminFormSubmissionDetailView,
+    AdminFormSubmissionExportView,
+)
 
 router = DefaultRouter()
 router.register(r'programs', views.AdminProgramViewSet, basename='admin-program')
@@ -35,4 +40,7 @@ urlpatterns = [
     path('users/<str:user_id>/progress/', views.AdminUserProgressView.as_view(), name='admin-user-progress'),
     path('stats/progress/', views.AdminProgressStatsView.as_view(), name='admin-progress-stats'),
     path('stats/progress/export/', views.AdminProgressExportView.as_view(), name='admin-progress-export'),
+    path('form-submissions/', AdminFormSubmissionListView.as_view(), name='admin-form-submissions'),
+    path('form-submissions/export/', AdminFormSubmissionExportView.as_view(), name='admin-form-submissions-export'),
+    path('form-submissions/<str:submission_id>/', AdminFormSubmissionDetailView.as_view(), name='admin-form-submission-detail'),
 ]
