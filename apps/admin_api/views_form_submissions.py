@@ -2,6 +2,7 @@ import csv
 
 from django.db.models import Q
 from django.http import HttpResponse
+from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -9,6 +10,9 @@ from apps.core.permissions import IsAdminOrAssistant
 from apps.programs.models import Program
 from apps.progress.models import FormSubmission
 from .serializers import AdminFormSubmissionRowSerializer, AdminFormSubmissionDetailSerializer
+
+_DEFAULT_PAGE_SIZE = 50
+_MAX_PAGE_SIZE = 200
 
 
 def _get_enrollment_asset_ids():
@@ -19,7 +23,7 @@ def _get_enrollment_asset_ids():
     )
 
 
-def _build_queryset(params):
+def _build_queryset(params, enrollment_ids=None):
     qs = FormSubmission.objects.select_related(
         'user',
         'asset__program',
@@ -43,11 +47,11 @@ def _build_queryset(params):
 
     filter_type = params.get('type', '')
     if filter_type in ('enrollment', 'in-course'):
-        enrollment_ids = _get_enrollment_asset_ids()
+        ids = enrollment_ids if enrollment_ids is not None else _get_enrollment_asset_ids()
         if filter_type == 'enrollment':
-            qs = qs.filter(asset_id__in=enrollment_ids)
+            qs = qs.filter(asset_id__in=ids)
         else:
-            qs = qs.exclude(asset_id__in=enrollment_ids)
+            qs = qs.exclude(asset_id__in=ids)
 
     return qs
 
@@ -56,14 +60,14 @@ class AdminFormSubmissionListView(APIView):
     permission_classes = [IsAdminOrAssistant]
 
     def get(self, request):
-        qs = _build_queryset(request.query_params)
         enrollment_ids = _get_enrollment_asset_ids()
+        qs = _build_queryset(request.query_params, enrollment_ids=enrollment_ids)
 
         try:
             page = max(1, int(request.query_params.get('page', 1)))
-            page_size = min(200, max(1, int(request.query_params.get('pageSize', 50))))
+            page_size = min(_MAX_PAGE_SIZE, max(1, int(request.query_params.get('pageSize', _DEFAULT_PAGE_SIZE))))
         except (ValueError, TypeError):
-            page, page_size = 1, 50
+            page, page_size = 1, _DEFAULT_PAGE_SIZE
 
         total = qs.count()
         start = (page - 1) * page_size
@@ -90,7 +94,7 @@ class AdminFormSubmissionDetailView(APIView):
                 'user', 'asset',
             ).prefetch_related('asset__form_fields').get(id=submission_id)
         except FormSubmission.DoesNotExist:
-            return Response({'error': 'Introuvable.'}, status=404)
+            return Response({'error': 'Introuvable.'}, status=status.HTTP_404_NOT_FOUND)
 
         return Response({'data': AdminFormSubmissionDetailSerializer(submission).data})
 
@@ -99,8 +103,8 @@ class AdminFormSubmissionExportView(APIView):
     permission_classes = [IsAdminOrAssistant]
 
     def get(self, request):
-        qs = _build_queryset(request.query_params)
         enrollment_ids = _get_enrollment_asset_ids()
+        qs = _build_queryset(request.query_params, enrollment_ids=enrollment_ids)
 
         submissions_data = []
         all_labels = []
@@ -127,12 +131,13 @@ class AdminFormSubmissionExportView(APIView):
         response.write('\ufeff')  # BOM for Excel UTF-8
 
         writer = csv.writer(response)
-        writer.writerow(['Etudiant', 'Telephone', 'Programme', 'Formulaire', 'Type', 'Date'] + all_labels)
+        writer.writerow(['Étudiant', 'Téléphone', 'Programme', 'Formulaire', 'Type', 'Date'] + all_labels)
 
         for sub, resolved in submissions_data:
             resp_map = {item['label']: item['value'] for item in resolved}
-            type_label = 'Inscription' if sub.asset_id in enrollment_ids else 'En cours'
-            if sub.asset_id in enrollment_ids:
+            is_enrollment = sub.asset_id in enrollment_ids
+            type_label = 'Inscription' if is_enrollment else 'En cours'
+            if is_enrollment:
                 program_title = sub.asset.program.name if sub.asset.program else ''
             elif sub.asset.step and sub.asset.step.degree and sub.asset.step.degree.program:
                 program_title = sub.asset.step.degree.program.name
