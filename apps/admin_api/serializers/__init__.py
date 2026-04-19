@@ -38,6 +38,8 @@ from .social import (
     AdminStepProgressSerializer,
     AdminQCMAttemptSerializer,
     AdminFormSubmissionSerializer,
+    AdminFormSubmissionRowSerializer,
+    AdminFormSubmissionDetailSerializer,
 )
 
 __all__ = [
@@ -57,4 +59,6 @@ __all__ = [
     'AdminTestimonyCommentSerializer', 'AdminTestimonySerializer',
     'AdminStepProgressSerializer', 'AdminQCMAttemptSerializer',
     'AdminFormSubmissionSerializer',
+    'AdminFormSubmissionRowSerializer',
+    'AdminFormSubmissionDetailSerializer',
 ]
