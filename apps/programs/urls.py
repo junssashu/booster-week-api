@@ -1,6 +1,7 @@
 from django.urls import path
 
 from . import views
+from .views_enrollment_form import ProgramEnrollmentFormView, ProgramEnrollmentFormSubmitView
 
 urlpatterns = [
     path('programs', views.ProgramListView.as_view(), name='program-list'),
@@ -13,4 +14,6 @@ urlpatterns = [
     path('programs/<str:program_id>/prise-de-contact', views.ProgramPriseDeContactView.as_view(), name='program-pdc'),
     path('degrees/<str:degree_id>/prise-de-contact', views.DegreePriseDeContactView.as_view(), name='degree-pdc'),
     path('steps/<str:step_id>/prise-de-contact', views.StepPriseDeContactView.as_view(), name='step-pdc'),
+    path('programs/<str:program_id>/enrollment-form', ProgramEnrollmentFormView.as_view(), name='program-enrollment-form'),
+    path('programs/<str:program_id>/enrollment-form/submit', ProgramEnrollmentFormSubmitView.as_view(), name='program-enrollment-form-submit'),
 ]
