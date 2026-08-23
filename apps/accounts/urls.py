@@ -1,6 +1,7 @@
 from django.urls import path
 
 from . import views
+from . import views_mandataires
 
 urlpatterns = [
     # Auth
@@ -14,4 +15,6 @@ urlpatterns = [
     path('users/me', views.ProfileView.as_view(), name='profile'),
     path('users/me/avatar', views.AvatarUploadView.as_view(), name='avatar-upload'),
     path('users/me/change-password', views.ChangePasswordView.as_view(), name='change-password'),
+    # Public mandataires
+    path('mandataires', views_mandataires.PublicMandataireListView.as_view(), name='public-mandataires'),
 ]

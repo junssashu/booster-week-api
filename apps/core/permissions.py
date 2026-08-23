@@ -50,3 +50,21 @@ class IsAdminOrAssistantReadOnly(BasePermission):
         if role == 'admin_assistant':
             return request.method in ('GET', 'HEAD', 'OPTIONS')
         return False
+
+
+class IsAdminOrAssistantNoCreateDelete(BasePermission):
+    """
+    Admin has full access.
+    Admin assistant can read and edit (GET, HEAD, OPTIONS, PUT, PATCH)
+    but cannot create (POST) or delete (DELETE).
+    """
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        role = request.user.role
+        if role == 'admin':
+            return True
+        if role == 'admin_assistant':
+            return request.method not in ('POST', 'DELETE')
+        return False
