@@ -38,3 +38,11 @@ docker-compose.override.yml
 # OS
 .DS_Store
 Thumbs.db
+
+# AI tooling (also closed globally in ~/.gitignore_global; kept local too
+# since this file previously had no entry for them at all)
+.claude/
+.claude/*.local.md
+claudedocs/
+.serena/
+.mcp.json
